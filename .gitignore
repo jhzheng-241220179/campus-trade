@@ -1,0 +1,26 @@
+# Build artifacts
+**/target/
+**/build/
+
+# IDE
+**/.idea/
+**/.vscode/
+*.iml
+
+# Local environment files
+.env
+**/.env
+**/.env.*
+!.env.example
+
+# Local Spring configurations
+**/application-local.yml
+**/application-local.yaml
+**/application-local.properties
+
+# Credentials
+*.pem
+*.key
+# OS files
+.DS_Store
+Thumbs.db
