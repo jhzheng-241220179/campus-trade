@@ -1,11 +1,13 @@
 package com.campustrade.controller;
 
 import com.campustrade.common.ApiResponse;
+import com.campustrade.dto.ProductCreateRequest;
 import com.campustrade.model.Product;
 import com.campustrade.service.ProductService;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+
+import jakarta.validation.Valid;
+
+import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 
@@ -22,5 +24,14 @@ public class ProductController {
     @GetMapping
     public ApiResponse<List<Product>> listProducts() {
         return ApiResponse.success(productService.listProducts());
+    }
+
+    @PostMapping
+    public ApiResponse<Long> createProduct(
+            @Valid @RequestBody ProductCreateRequest request) {
+
+        Long productId = productService.createProduct(request);
+
+        return ApiResponse.success(productId);
     }
 }

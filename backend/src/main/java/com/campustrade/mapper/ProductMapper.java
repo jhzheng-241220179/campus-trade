@@ -1,7 +1,10 @@
 package com.campustrade.mapper;
 
 import com.campustrade.model.Product;
+
+import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Mapper;
+import org.apache.ibatis.annotations.Options;
 import org.apache.ibatis.annotations.Select;
 
 import java.util.List;
@@ -11,4 +14,27 @@ public interface ProductMapper {
 
     @Select("SELECT * FROM products ORDER BY id")
     List<Product> findAll();
+
+    @Insert("""
+        INSERT INTO products (
+            seller_id,
+            title,
+            price,
+            category,
+            description,
+            condition_level,
+            contact
+        )
+        VALUES (
+            #{sellerId},
+            #{title},
+            #{price},
+            #{category},
+            #{description},
+            #{conditionLevel},
+            #{contact}
+        )
+        """)
+    @Options(useGeneratedKeys = true, keyProperty = "id")
+    int insert(Product product);
 }
