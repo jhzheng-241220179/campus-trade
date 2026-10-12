@@ -14,12 +14,6 @@ import java.util.List;
 @RequestMapping("/api/test")
 public class TestController {
 
-    private final ProductMapper productMapper;
-
-    public TestController(ProductMapper productMapper) {
-        this.productMapper = productMapper;
-    }
-
     @GetMapping("/hello")
     public ApiResponse<String> hello() {
         return ApiResponse.success("CampusTrade API is ready!");
@@ -37,8 +31,4 @@ public class TestController {
         throw new IllegalArgumentException("这是一个测试异常");
     }
 
-    @GetMapping("/products")
-    public ApiResponse<List<Product>> getProducts() {
-        return ApiResponse.success(productMapper.findAll());
-    }
 }

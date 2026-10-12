@@ -6,7 +6,10 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
-
+import org.springframework.http.HttpStatus;
+import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.ResponseStatus;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
@@ -34,7 +37,17 @@ public class GlobalExceptionHandler {
                 .badRequest()
                 .body(ApiResponse.error(400, message));
     }
+    @ExceptionHandler(NoResourceFoundException.class)
+        @ResponseStatus(HttpStatus.NOT_FOUND)
+        public ApiResponse<Void> handleNotFound(
+                NoResourceFoundException ex) {
 
+        return new ApiResponse<>(
+                404,
+                "请求的资源不存在",
+                null
+        );
+        }
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ApiResponse<Void>> handleException(
             Exception e) {
