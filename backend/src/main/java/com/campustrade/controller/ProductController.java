@@ -21,11 +21,18 @@ public class ProductController {
         this.productService = productService;
     }
 
-    @GetMapping
-    public ApiResponse<List<Product>> listProducts() {
-        return ApiResponse.success(productService.listProducts());
-    }
-
+@GetMapping
+public ApiResponse<List<Product>> listProducts() {
+    return ApiResponse.success(
+            productService.listPublishedProducts()
+    );
+}
+@GetMapping("/{id}")
+public ApiResponse<Product> getProduct(@PathVariable Long id) {
+    return ApiResponse.success(
+            productService.getPublishedProductById(id)
+    );
+}
     @PostMapping
     public ApiResponse<Long> createProduct(
             @Valid @RequestBody ProductCreateRequest request) {

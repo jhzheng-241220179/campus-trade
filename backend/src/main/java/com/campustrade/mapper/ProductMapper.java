@@ -14,7 +14,10 @@ public interface ProductMapper {
 
     @Select("SELECT * FROM products ORDER BY id")
     List<Product> findAll();
-
+    @Select("SELECT * FROM products WHERE status = 'PUBLISHED' ORDER BY id")
+    List<Product> findPublished();
+    @Select("SELECT * FROM products WHERE id = #{id}")
+    Product findById(Long id);
     @Insert("""
         INSERT INTO products (
             seller_id,

@@ -4,7 +4,7 @@ import com.campustrade.dto.ProductCreateRequest;
 import com.campustrade.mapper.ProductMapper;
 import com.campustrade.mapper.UserMapper;
 import com.campustrade.model.Product;
-
+import com.campustrade.exception.ProductNotFoundException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -16,6 +16,29 @@ public class ProductService {
     private final ProductMapper productMapper;
     private final UserMapper userMapper;
 
+    public List<Product> listPublishedProducts() {
+            return productMapper.findPublished();
+        }
+        public Product getPublishedProductById(Long id) {
+
+        Product product = productMapper.findById(id);
+
+        if (product == null || !"PUBLISHED".equals(product.getStatus())) {
+            throw new ProductNotFoundException(id);
+        }
+
+        return product;
+    }
+    public Product getProductById(Long id) {
+
+        Product product = productMapper.findById(id);
+
+        if (product == null) {
+            throw new ProductNotFoundException(id);
+        }
+
+        return product;
+    }
     public ProductService(
             ProductMapper productMapper,
             UserMapper userMapper) {

@@ -1,5 +1,5 @@
 package com.campustrade.exception;
-
+import com.campustrade.exception.ProductNotFoundException;
 import com.campustrade.common.ApiResponse;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -47,6 +47,14 @@ public class GlobalExceptionHandler {
                 "请求的资源不存在",
                 null
         );
+        }
+        
+        @ExceptionHandler(ProductNotFoundException.class)
+        @ResponseStatus(HttpStatus.NOT_FOUND)
+        public ApiResponse<Void> handleProductNotFound(
+                ProductNotFoundException ex) {
+
+        return new ApiResponse<>(404, ex.getMessage(), null);
         }
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ApiResponse<Void>> handleException(
