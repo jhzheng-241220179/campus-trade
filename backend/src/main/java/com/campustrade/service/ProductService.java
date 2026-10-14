@@ -7,7 +7,9 @@ import com.campustrade.model.Product;
 import com.campustrade.exception.ProductNotFoundException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-
+import com.campustrade.dto.ProductUpdateRequest;
+import com.campustrade.exception.ProductStatusException;
+import com.campustrade.exception.ProductConflictException;
 import java.util.List;
 
 @Service
@@ -52,6 +54,31 @@ public class ProductService {
     }
 
     @Transactional
+    public void updateProduct(Long id, ProductUpdateRequest request) {
+
+    Product product = productMapper.findById(id);
+
+    if (product == null) {
+        throw new ProductNotFoundException(id);
+    }
+
+    if (!"DRAFT".equals(product.getStatus())) {
+        throw new ProductStatusException("只有草稿状态的商品允许编辑");
+    }
+
+    product.setTitle(request.title());
+    product.setPrice(request.price());
+    product.setCategory(request.category());
+    product.setDescription(request.description());
+    product.setConditionLevel(request.conditionLevel());
+    product.setContact(request.contact());
+
+    int rows = productMapper.update(product);
+
+    if (rows != 1) {
+        throw new ProductConflictException("商品已发生变化，请刷新后重试");
+    }
+}
     public Long createProduct(ProductCreateRequest request) {
 
         if (userMapper.countById(request.sellerId()) == 0) {

@@ -1,5 +1,7 @@
 package com.campustrade.exception;
 import com.campustrade.exception.ProductNotFoundException;
+import com.campustrade.exception.ProductStatusException;
+import com.campustrade.exception.ProductConflictException;
 import com.campustrade.common.ApiResponse;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -9,6 +11,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.ResponseStatus;
+
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -21,7 +24,14 @@ public class GlobalExceptionHandler {
                 .badRequest()
                 .body(ApiResponse.error(400, e.getMessage()));
     }
-
+    @ExceptionHandler({
+        ProductStatusException.class,
+        ProductConflictException.class
+})
+@ResponseStatus(HttpStatus.CONFLICT)
+public ApiResponse<Void> handleProductConflict(RuntimeException ex) {
+    return new ApiResponse<>(409, ex.getMessage(), null);
+}
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<ApiResponse<Void>> handleValidation(
             MethodArgumentNotValidException e) {

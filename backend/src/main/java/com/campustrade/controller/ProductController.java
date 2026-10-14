@@ -4,6 +4,7 @@ import com.campustrade.common.ApiResponse;
 import com.campustrade.dto.ProductCreateRequest;
 import com.campustrade.model.Product;
 import com.campustrade.service.ProductService;
+import com.campustrade.dto.ProductUpdateRequest;
 
 import jakarta.validation.Valid;
 
@@ -41,4 +42,13 @@ public ApiResponse<Product> getProduct(@PathVariable Long id) {
 
         return ApiResponse.success(productId);
     }
+    @PutMapping("/{id}")
+public ApiResponse<Void> updateProduct(
+        @PathVariable Long id,
+        @Valid @RequestBody ProductUpdateRequest request) {
+
+    productService.updateProduct(id, request);
+
+    return ApiResponse.success(null);
+}
 }
