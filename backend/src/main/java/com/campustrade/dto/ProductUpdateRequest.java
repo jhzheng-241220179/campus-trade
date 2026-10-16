@@ -5,11 +5,11 @@ import jakarta.validation.constraints.Digits;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
-
+import jakarta.validation.constraints.PositiveOrZero;
 import java.math.BigDecimal;
 
 public record ProductUpdateRequest(
-
+        
         @NotBlank(message = "商品标题不能为空")
         @Size(max = 100, message = "商品标题不能超过100个字符")
         String title,
@@ -30,6 +30,10 @@ public record ProductUpdateRequest(
         String conditionLevel,
 
         @Size(max = 100, message = "联系方式不能超过100个字符")
-        String contact
+        String contact,
+
+        @NotNull(message = "商品版本号不能为空")
+        @PositiveOrZero(message = "商品版本号不能为负数")
+        Integer version
 
 ) {}

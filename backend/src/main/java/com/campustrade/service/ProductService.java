@@ -65,6 +65,11 @@ public class ProductService {
     if (!"DRAFT".equals(product.getStatus())) {
         throw new ProductStatusException("只有草稿状态的商品允许编辑");
     }
+    if (!product.getVersion().equals(request.version())) {
+        throw new ProductConflictException(
+                "商品版本已过期，请刷新后重试"
+        );
+    }
 
     product.setTitle(request.title());
     product.setPrice(request.price());
