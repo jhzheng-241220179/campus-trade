@@ -74,4 +74,11 @@ public ApiResponse<Void> handleProductConflict(RuntimeException ex) {
                 .status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(ApiResponse.error(500, "服务器内部错误"));
     }
+        @ExceptionHandler(EmailAlreadyRegisteredException.class)
+        @ResponseStatus(HttpStatus.CONFLICT)
+        public ApiResponse<Void> handleEmailAlreadyRegistered(
+                EmailAlreadyRegisteredException ex) {
+
+        return new ApiResponse<>(409, ex.getMessage(), null);
+        }
 }
