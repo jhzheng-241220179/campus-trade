@@ -17,6 +17,8 @@ import java.time.LocalDateTime;
 public class VerificationCodeService {
 
     private static final int MAX_ATTEMPTS = 5;
+    private static final int MAX_ISSUES_PER_HOUR = 5;
+    private static final int ISSUE_COOLDOWN_SECONDS = 60;
 
     private final UserMapper userMapper;
     private final EmailVerificationCodeMapper codeMapper;
@@ -66,10 +68,33 @@ public class VerificationCodeService {
 
         LocalDateTime now = LocalDateTime.now();
 
-        // 先使旧的未使用验证码失效
+        if (userMapper.getVerificationFailureCount(userId)
+                >= MAX_ATTEMPTS) {
+            throw new IllegalStateException("验证码错误次数已达上限");
+        }
+
+        LocalDateTime lastIssuedAt =
+                codeMapper.findLastIssuedAt(userId);
+
+        if (lastIssuedAt != null
+                && lastIssuedAt.plusSeconds(ISSUE_COOLDOWN_SECONDS)
+                        .isAfter(now)) {
+            throw new IllegalStateException(
+                    "验证码申请过于频繁，请稍后重试");
+        }
+
+        int issuedCount = codeMapper.countIssuedSince(
+                userId,
+                now.minusHours(1)
+        );
+
+        if (issuedCount >= MAX_ISSUES_PER_HOUR) {
+            throw new IllegalStateException(
+                    "一小时内验证码申请次数已达上限");
+        }
+
         codeMapper.invalidateUnused(userId, now);
 
-        // 生成新验证码
         String plainCode = generator.generate();
 
         EmailVerificationCode record =
@@ -99,7 +124,6 @@ public class VerificationCodeService {
             throw new IllegalArgumentException("验证码参数不能为空");
         }
 
-        // 统一锁定用户行，避免签发与验证相互竞争
         User user = userMapper.findByIdForUpdate(userId);
 
         if (user == null) {
@@ -109,6 +133,11 @@ public class VerificationCodeService {
         if (!"PENDING_VERIFICATION".equals(user.getStatus())
                 || !Boolean.FALSE.equals(user.getEmailVerified())) {
             return VerifyResult.USER_NOT_PENDING;
+        }
+
+        if (userMapper.getVerificationFailureCount(userId)
+                >= MAX_ATTEMPTS) {
+            return VerifyResult.TOO_MANY_ATTEMPTS;
         }
 
         EmailVerificationCode record =
@@ -128,7 +157,6 @@ public class VerificationCodeService {
             return VerifyResult.TOO_MANY_ATTEMPTS;
         }
 
-        // 格式错误也算一次错误尝试
         boolean validFormat = inputCode.matches("[0-9]{6}");
 
         boolean correct = validFormat
@@ -141,19 +169,29 @@ public class VerificationCodeService {
         if (!correct) {
 
             int rows = codeMapper.incrementAttemptCount(
-                    record.getId(), now
+                    record.getId(),
+                    now
             );
 
             if (rows != 1) {
-                throw new IllegalStateException("验证码错误次数更新失败");
+                throw new IllegalStateException(
+                        "验证码错误次数更新失败");
             }
 
-            // 正常返回，使错误次数能够提交
+            int updated =
+                    userMapper.incrementVerificationFailureCount(userId);
+
+            if (updated != 1) {
+                throw new IllegalStateException(
+                        "账户验证码错误次数更新失败");
+            }
+
             return VerifyResult.WRONG_CODE;
         }
 
         int usedRows = codeMapper.markUsed(
-                record.getId(), now
+                record.getId(),
+                now
         );
 
         if (usedRows != 1) {

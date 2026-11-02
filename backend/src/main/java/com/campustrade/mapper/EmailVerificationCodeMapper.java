@@ -1,3 +1,4 @@
+
 package com.campustrade.mapper;
 
 import com.campustrade.model.EmailVerificationCode;
@@ -14,7 +15,6 @@ import java.time.LocalDateTime;
 @Mapper
 public interface EmailVerificationCodeMapper {
 
-    // 1. 保存新验证码
     @Insert("""
         INSERT INTO email_verification_codes (
             user_id,
@@ -32,7 +32,6 @@ public interface EmailVerificationCodeMapper {
     @Options(useGeneratedKeys = true, keyProperty = "id")
     int insert(EmailVerificationCode code);
 
-    // 2. 查询用户最新的未使用验证码，并加行锁
     @Select("""
         SELECT *
         FROM email_verification_codes
@@ -46,7 +45,6 @@ public interface EmailVerificationCodeMapper {
             @Param("userId") Long userId
     );
 
-    // 3. 使用户旧的未使用验证码失效
     @Update("""
         UPDATE email_verification_codes
         SET used_at = #{now}
@@ -58,7 +56,6 @@ public interface EmailVerificationCodeMapper {
             @Param("now") LocalDateTime now
     );
 
-    // 4. 记录一次错误尝试
     @Update("""
         UPDATE email_verification_codes
         SET attempt_count = attempt_count + 1
@@ -72,7 +69,6 @@ public interface EmailVerificationCodeMapper {
             @Param("now") LocalDateTime now
     );
 
-    // 5. 标记验证码已经成功使用
     @Update("""
         UPDATE email_verification_codes
         SET used_at = #{now}
@@ -84,5 +80,25 @@ public interface EmailVerificationCodeMapper {
     int markUsed(
             @Param("id") Long id,
             @Param("now") LocalDateTime now
+    );
+
+    @Select("""
+        SELECT COUNT(*)
+        FROM email_verification_codes
+        WHERE user_id = #{userId}
+          AND created_at >= #{since}
+        """)
+    int countIssuedSince(
+            @Param("userId") Long userId,
+            @Param("since") LocalDateTime since
+    );
+
+    @Select("""
+        SELECT MAX(created_at)
+        FROM email_verification_codes
+        WHERE user_id = #{userId}
+        """)
+    LocalDateTime findLastIssuedAt(
+            @Param("userId") Long userId
     );
 }

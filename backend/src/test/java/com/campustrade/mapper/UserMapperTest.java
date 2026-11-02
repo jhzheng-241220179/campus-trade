@@ -6,7 +6,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 
 import static org.junit.jupiter.api.Assertions.assertNull;
-
+@org.springframework.test.context.ActiveProfiles("test")
 @SpringBootTest
 class UserMapperTest {
 

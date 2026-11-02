@@ -10,7 +10,10 @@ import com.campustrade.security.VerificationCodeHasher;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.LocalDateTime;
 
@@ -18,163 +21,244 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
+@ExtendWith(MockitoExtension.class)
 class VerificationCodeServiceTest {
 
+    private static final Long USER_ID = 1L;
+    private static final Long CODE_ID = 100L;
+    private static final String CODE = "123456";
+    private static final String HASH = "test_hash";
+
+    @Mock
     private UserMapper userMapper;
+
+    @Mock
     private EmailVerificationCodeMapper codeMapper;
+
+    @Mock
     private VerificationCodeGenerator generator;
+
+    @Mock
     private VerificationCodeHasher hasher;
+
+    @InjectMocks
     private VerificationCodeService service;
+
+    private User user;
 
     @BeforeEach
     void setUp() {
-        userMapper = mock(UserMapper.class);
-        codeMapper = mock(EmailVerificationCodeMapper.class);
-        generator = mock(VerificationCodeGenerator.class);
-
-        hasher = new VerificationCodeHasher(
-                "TestSecretKeyForCampusTrade1234567890"
-        );
-
-        service = new VerificationCodeService(
-                userMapper,
-                codeMapper,
-                generator,
-                hasher
-        );
-    }
-
-    private User pendingUser() {
-        User user = new User();
-        user.setId(10L);
-        user.setEmailVerified(false);
+        user = new User();
+        user.setId(USER_ID);
         user.setStatus("PENDING_VERIFICATION");
-        return user;
+        user.setEmailVerified(false);
     }
 
-    private EmailVerificationCode validCode() {
+    private EmailVerificationCode createValidCode() {
         EmailVerificationCode record =
                 new EmailVerificationCode();
 
-        record.setId(100L);
-        record.setUserId(10L);
-        record.setCodeHash(hasher.hash(10L, "123456"));
+        record.setId(CODE_ID);
+        record.setUserId(USER_ID);
+        record.setCodeHash(HASH);
+        record.setExpiresAt(LocalDateTime.now().plusMinutes(5));
         record.setAttemptCount(0);
-        record.setUsedAt(null);
-        record.setExpiresAt(
-                LocalDateTime.now().plusMinutes(5)
-        );
 
         return record;
     }
 
-    // 1. 正常签发验证码
     @Test
-    void issueCode_shouldInvalidateOldAndInsertNew() {
+    void issueCode_shouldCreateCodeSuccessfully() {
+        when(userMapper.findByIdForUpdate(USER_ID))
+                .thenReturn(user);
 
-        when(userMapper.findByIdForUpdate(10L))
-                .thenReturn(pendingUser());
+        when(userMapper.getVerificationFailureCount(USER_ID))
+                .thenReturn(0);
+
+        when(codeMapper.findLastIssuedAt(USER_ID))
+                .thenReturn(null);
+
+        when(codeMapper.countIssuedSince(
+                eq(USER_ID), any(LocalDateTime.class)))
+                .thenReturn(0);
 
         when(generator.generate())
-                .thenReturn("123456");
+                .thenReturn(CODE);
+
+        when(hasher.hash(USER_ID, CODE))
+                .thenReturn(HASH);
 
         when(codeMapper.insert(any(EmailVerificationCode.class)))
                 .thenAnswer(invocation -> {
                     EmailVerificationCode record =
                             invocation.getArgument(0);
-                    record.setId(100L);
+                    record.setId(CODE_ID);
                     return 1;
                 });
 
-        VerificationCodeService.IssuedCode issued =
-                service.issueCode(10L);
+        VerificationCodeService.IssuedCode result =
+                service.issueCode(USER_ID);
 
-        assertEquals("123456", issued.code());
-        assertTrue(issued.expiresAt()
-                .isAfter(LocalDateTime.now()));
-
-        ArgumentCaptor<EmailVerificationCode> captor =
-                ArgumentCaptor.forClass(
-                        EmailVerificationCode.class
-                );
-
-        verify(codeMapper).insert(captor.capture());
-
-        EmailVerificationCode saved = captor.getValue();
-
-        assertEquals(10L, saved.getUserId());
-        assertEquals(0, saved.getAttemptCount());
-        assertEquals(
-                hasher.hash(10L, "123456"),
-                saved.getCodeHash()
-        );
-        assertNotEquals("123456", saved.getCodeHash());
+        assertNotNull(result);
+        assertEquals(CODE, result.code());
+        assertTrue(result.expiresAt().isAfter(LocalDateTime.now()));
 
         verify(codeMapper).invalidateUnused(
-                eq(10L),
-                any(LocalDateTime.class)
+                eq(USER_ID), any(LocalDateTime.class));
+
+        verify(codeMapper).insert(any(EmailVerificationCode.class));
+    }
+
+    @Test
+    void issueCode_shouldRejectDuringCooldown() {
+        when(userMapper.findByIdForUpdate(USER_ID))
+                .thenReturn(user);
+
+        when(userMapper.getVerificationFailureCount(USER_ID))
+                .thenReturn(0);
+
+        when(codeMapper.findLastIssuedAt(USER_ID))
+                .thenReturn(LocalDateTime.now().minusSeconds(30));
+
+        IllegalStateException exception = assertThrows(
+                IllegalStateException.class,
+                () -> service.issueCode(USER_ID)
         );
 
-        var order = inOrder(codeMapper);
-        order.verify(codeMapper).invalidateUnused(
-                eq(10L),
-                any(LocalDateTime.class)
+        assertTrue(exception.getMessage().contains("频繁"));
+
+        verify(codeMapper, never())
+                .insert(any(EmailVerificationCode.class));
+    }
+
+    @Test
+    void issueCode_shouldRejectAfterHourlyLimit() {
+        when(userMapper.findByIdForUpdate(USER_ID))
+                .thenReturn(user);
+
+        when(userMapper.getVerificationFailureCount(USER_ID))
+                .thenReturn(0);
+
+        when(codeMapper.findLastIssuedAt(USER_ID))
+                .thenReturn(LocalDateTime.now().minusMinutes(2));
+
+        when(codeMapper.countIssuedSince(
+                eq(USER_ID), any(LocalDateTime.class)))
+                .thenReturn(5);
+
+        IllegalStateException exception = assertThrows(
+                IllegalStateException.class,
+                () -> service.issueCode(USER_ID)
         );
-        order.verify(codeMapper).insert(
-                any(EmailVerificationCode.class)
+
+        assertTrue(exception.getMessage().contains("一小时"));
+
+        verify(codeMapper, never())
+                .insert(any(EmailVerificationCode.class));
+    }
+
+    @Test
+    void issueCode_shouldRejectWhenAccountLocked() {
+        when(userMapper.findByIdForUpdate(USER_ID))
+                .thenReturn(user);
+
+        when(userMapper.getVerificationFailureCount(USER_ID))
+                .thenReturn(5);
+
+        assertThrows(
+                IllegalStateException.class,
+                () -> service.issueCode(USER_ID)
+        );
+
+        verify(codeMapper, never())
+                .insert(any(EmailVerificationCode.class));
+    }
+
+    @Test
+    void verifyCode_shouldReturnUserNotFound() {
+        when(userMapper.findByIdForUpdate(USER_ID))
+                .thenReturn(null);
+
+        VerificationCodeService.VerifyResult result =
+                service.verifyCode(USER_ID, CODE);
+
+        assertEquals(
+                VerificationCodeService.VerifyResult.USER_NOT_FOUND,
+                result
         );
     }
 
-    // 2. 正确验证码：使用一次并激活账户
     @Test
-    void verifyCode_shouldActivateUserWhenCorrect() {
+    void verifyCode_shouldReturnCodeNotFound() {
+        when(userMapper.findByIdForUpdate(USER_ID))
+                .thenReturn(user);
 
-        when(userMapper.findByIdForUpdate(10L))
-                .thenReturn(pendingUser());
+        when(userMapper.getVerificationFailureCount(USER_ID))
+                .thenReturn(0);
 
-        when(codeMapper.findLatestUnusedForUpdate(10L))
-                .thenReturn(validCode());
+        when(codeMapper.findLatestUnusedForUpdate(USER_ID))
+                .thenReturn(null);
 
-        when(codeMapper.markUsed(
-                eq(100L), any(LocalDateTime.class)
-        )).thenReturn(1);
-
-        when(userMapper.activateEmail(10L))
-                .thenReturn(1);
-
-        var result = service.verifyCode(10L, "123456");
+        VerificationCodeService.VerifyResult result =
+                service.verifyCode(USER_ID, CODE);
 
         assertEquals(
-                VerificationCodeService.VerifyResult.SUCCESS,
+                VerificationCodeService.VerifyResult.CODE_NOT_FOUND,
+                result
+        );
+    }
+
+    @Test
+    void verifyCode_shouldRejectExpiredCode() {
+        EmailVerificationCode record = createValidCode();
+        record.setExpiresAt(LocalDateTime.now().minusMinutes(1));
+
+        when(userMapper.findByIdForUpdate(USER_ID))
+                .thenReturn(user);
+
+        when(userMapper.getVerificationFailureCount(USER_ID))
+                .thenReturn(0);
+
+        when(codeMapper.findLatestUnusedForUpdate(USER_ID))
+                .thenReturn(record);
+
+        VerificationCodeService.VerifyResult result =
+                service.verifyCode(USER_ID, CODE);
+
+        assertEquals(
+                VerificationCodeService.VerifyResult.CODE_EXPIRED,
                 result
         );
 
-        verify(codeMapper).markUsed(
-                eq(100L), any(LocalDateTime.class)
-        );
-        verify(userMapper).activateEmail(10L);
         verify(codeMapper, never())
-                .incrementAttemptCount(
-                        anyLong(),
-                        any(LocalDateTime.class)
-                );
+                .markUsed(anyLong(), any(LocalDateTime.class));
     }
 
-    // 3. 错误验证码：记录错误次数
     @Test
     void verifyCode_shouldIncrementAttemptsWhenWrong() {
+        EmailVerificationCode record = createValidCode();
 
-        when(userMapper.findByIdForUpdate(10L))
-                .thenReturn(pendingUser());
+        when(userMapper.findByIdForUpdate(USER_ID))
+                .thenReturn(user);
 
-        when(codeMapper.findLatestUnusedForUpdate(10L))
-                .thenReturn(validCode());
+        when(userMapper.getVerificationFailureCount(USER_ID))
+                .thenReturn(0);
+
+        when(codeMapper.findLatestUnusedForUpdate(USER_ID))
+                .thenReturn(record);
+
+        when(hasher.matches(USER_ID, "999999", HASH))
+                .thenReturn(false);
 
         when(codeMapper.incrementAttemptCount(
-                eq(100L), any(LocalDateTime.class)
-        )).thenReturn(1);
+                eq(CODE_ID), any(LocalDateTime.class)))
+                .thenReturn(1);
 
-        var result = service.verifyCode(10L, "654321");
+        when(userMapper.incrementVerificationFailureCount(USER_ID))
+                .thenReturn(1);
+
+        VerificationCodeService.VerifyResult result =
+                service.verifyCode(USER_ID, "999999");
 
         assertEquals(
                 VerificationCodeService.VerifyResult.WRONG_CODE,
@@ -182,145 +266,98 @@ class VerificationCodeServiceTest {
         );
 
         verify(codeMapper).incrementAttemptCount(
-                eq(100L), any(LocalDateTime.class)
-        );
-        verify(codeMapper, never()).markUsed(
-                anyLong(), any(LocalDateTime.class)
-        );
-        verify(userMapper, never()).activateEmail(anyLong());
+                eq(CODE_ID), any(LocalDateTime.class));
+
+        verify(userMapper).incrementVerificationFailureCount(USER_ID);
+
+        verify(codeMapper, never())
+                .markUsed(anyLong(), any(LocalDateTime.class));
     }
 
-    // 4. 过期验证码：拒绝验证
     @Test
-    void verifyCode_shouldRejectExpiredCode() {
+    void verifyCode_shouldRejectAfterFifthWrongAttempt() {
+        EmailVerificationCode record = createValidCode();
+        record.setAttemptCount(4);
 
-        EmailVerificationCode expired = validCode();
-        expired.setExpiresAt(
-                LocalDateTime.now().minusMinutes(1)
-        );
+        when(userMapper.findByIdForUpdate(USER_ID))
+                .thenReturn(user);
 
-        when(userMapper.findByIdForUpdate(10L))
-                .thenReturn(pendingUser());
+        when(userMapper.getVerificationFailureCount(USER_ID))
+                .thenReturn(4, 5);
 
-        when(codeMapper.findLatestUnusedForUpdate(10L))
-                .thenReturn(expired);
+        when(codeMapper.findLatestUnusedForUpdate(USER_ID))
+                .thenReturn(record);
 
-        var result = service.verifyCode(10L, "123456");
+        when(hasher.matches(USER_ID, "999999", HASH))
+                .thenReturn(false);
+
+        when(codeMapper.incrementAttemptCount(
+                eq(CODE_ID), any(LocalDateTime.class)))
+                .thenReturn(1);
+
+        when(userMapper.incrementVerificationFailureCount(USER_ID))
+                .thenReturn(1);
+
+        VerificationCodeService.VerifyResult first =
+                service.verifyCode(USER_ID, "999999");
 
         assertEquals(
-                VerificationCodeService.VerifyResult.CODE_EXPIRED,
-                result
+                VerificationCodeService.VerifyResult.WRONG_CODE,
+                first
         );
 
-        verify(userMapper, never()).activateEmail(anyLong());
-        verify(codeMapper, never()).markUsed(
-                anyLong(), any(LocalDateTime.class)
-        );
-    }
-
-    // 5. 已经错误五次：不允许再次尝试
-    @Test
-    void verifyCode_shouldRejectTooManyAttempts() {
-
-        EmailVerificationCode exhausted = validCode();
-        exhausted.setAttemptCount(5);
-
-        when(userMapper.findByIdForUpdate(10L))
-                .thenReturn(pendingUser());
-
-        when(codeMapper.findLatestUnusedForUpdate(10L))
-                .thenReturn(exhausted);
-
-        var result = service.verifyCode(10L, "123456");
+        VerificationCodeService.VerifyResult second =
+                service.verifyCode(USER_ID, CODE);
 
         assertEquals(
                 VerificationCodeService.VerifyResult.TOO_MANY_ATTEMPTS,
+                second
+        );
+
+        verify(userMapper, times(1))
+                .incrementVerificationFailureCount(USER_ID);
+
+        verify(codeMapper, never())
+                .markUsed(anyLong(), any(LocalDateTime.class));
+    }
+
+    @Test
+    void verifyCode_shouldActivateUserWhenCorrect() {
+        EmailVerificationCode record = createValidCode();
+
+        when(userMapper.findByIdForUpdate(USER_ID))
+                .thenReturn(user);
+
+        when(userMapper.getVerificationFailureCount(USER_ID))
+                .thenReturn(0);
+
+        when(codeMapper.findLatestUnusedForUpdate(USER_ID))
+                .thenReturn(record);
+
+        when(hasher.matches(USER_ID, CODE, HASH))
+                .thenReturn(true);
+
+        when(codeMapper.markUsed(
+                eq(CODE_ID), any(LocalDateTime.class)))
+                .thenReturn(1);
+
+        when(userMapper.activateEmail(USER_ID))
+                .thenReturn(1);
+
+        VerificationCodeService.VerifyResult result =
+                service.verifyCode(USER_ID, CODE);
+
+        assertEquals(
+                VerificationCodeService.VerifyResult.SUCCESS,
                 result
         );
 
-        verify(codeMapper, never()).markUsed(
-                anyLong(), any(LocalDateTime.class)
-        );
-        verify(userMapper, never()).activateEmail(anyLong());
-    }
-
-    // 6. 激活失败：抛出异常
-    @Test
-    void verifyCode_shouldThrowWhenActivationFails() {
-
-        when(userMapper.findByIdForUpdate(10L))
-                .thenReturn(pendingUser());
-
-        when(codeMapper.findLatestUnusedForUpdate(10L))
-                .thenReturn(validCode());
-
-        when(codeMapper.markUsed(
-                eq(100L), any(LocalDateTime.class)
-        )).thenReturn(1);
-
-        when(userMapper.activateEmail(10L))
-                .thenReturn(0);
-
-        assertThrows(
-                IllegalStateException.class,
-                () -> service.verifyCode(10L, "123456")
-        );
-
         verify(codeMapper).markUsed(
-                eq(100L), any(LocalDateTime.class)
-        );
-        verify(userMapper).activateEmail(10L);
+                eq(CODE_ID), any(LocalDateTime.class));
+
+        verify(userMapper).activateEmail(USER_ID);
+
+        verify(userMapper, never())
+                .incrementVerificationFailureCount(anyLong());
     }
-@Test
-void verifyCode_shouldRejectReusedCode() {
-
-    when(userMapper.findByIdForUpdate(10L))
-            .thenReturn(pendingUser());
-
-    // 模拟验证码已被之前的请求消耗
-    when(codeMapper.findLatestUnusedForUpdate(10L))
-            .thenReturn(null);
-
-    var result = service.verifyCode(10L, "123456");
-
-    assertEquals(
-            VerificationCodeService.VerifyResult.CODE_NOT_FOUND,
-            result
-    );
-
-    verify(codeMapper, never()).markUsed(
-            anyLong(), any(LocalDateTime.class)
-    );
-
-    verify(userMapper, never()).activateEmail(anyLong());
-}
-@Test
-void verifyCode_shouldRejectAfterFifthWrongAttempt() {
-
-    EmailVerificationCode record = validCode();
-    record.setAttemptCount(4);
-
-    when(userMapper.findByIdForUpdate(10L))
-            .thenReturn(pendingUser());
-
-    when(codeMapper.findLatestUnusedForUpdate(10L))
-            .thenReturn(record);
-
-    when(codeMapper.incrementAttemptCount(
-            eq(100L), any(LocalDateTime.class)
-    )).thenReturn(1);
-
-    var result = service.verifyCode(10L, "654321");
-
-    assertEquals(
-            VerificationCodeService.VerifyResult.WRONG_CODE,
-            result
-    );
-
-    verify(codeMapper).incrementAttemptCount(
-            eq(100L), any(LocalDateTime.class)
-    );
-
-    verify(userMapper, never()).activateEmail(anyLong());
-}
 }
