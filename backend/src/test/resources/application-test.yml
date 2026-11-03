@@ -14,7 +14,14 @@ spring:
     baseline-on-migrate: false
     locations: classpath:db/migration
     clean-disabled: true
+  mail:
+    host: localhost
+    port: 2525
+    username: test
+    password: test
 
 app:
+  mail:
+    from: test@example.com
   verification:
     hmac-secret: ${CT_TEST_HMAC_SECRET}
