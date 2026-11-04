@@ -1,6 +1,6 @@
 
 package com.campustrade.service;
-
+import com.campustrade.exception.VerificationCodeLimitException;
 import com.campustrade.mapper.EmailVerificationCodeMapper;
 import com.campustrade.mapper.UserMapper;
 import com.campustrade.model.EmailVerificationCode;
@@ -70,7 +70,7 @@ public class VerificationCodeService {
 
         if (userMapper.getVerificationFailureCount(userId)
                 >= MAX_ATTEMPTS) {
-            throw new IllegalStateException("验证码错误次数已达上限");
+            throw new VerificationCodeLimitException("验证码错误次数已达上限");
         }
 
         LocalDateTime lastIssuedAt =
@@ -79,7 +79,7 @@ public class VerificationCodeService {
         if (lastIssuedAt != null
                 && lastIssuedAt.plusSeconds(ISSUE_COOLDOWN_SECONDS)
                         .isAfter(now)) {
-            throw new IllegalStateException(
+            throw new VerificationCodeLimitException(
                     "验证码申请过于频繁，请稍后重试");
         }
 
@@ -89,7 +89,7 @@ public class VerificationCodeService {
         );
 
         if (issuedCount >= MAX_ISSUES_PER_HOUR) {
-            throw new IllegalStateException(
+            throw new VerificationCodeLimitException(
                     "一小时内验证码申请次数已达上限");
         }
 

@@ -1,42 +1,33 @@
+
 package com.campustrade.exception;
-import com.campustrade.exception.ProductNotFoundException;
-import com.campustrade.exception.ProductStatusException;
-import com.campustrade.exception.ProductConflictException;
+
 import com.campustrade.common.ApiResponse;
+
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
-import org.springframework.web.bind.annotation.RestControllerAdvice;
-import org.springframework.http.HttpStatus;
-import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.ResponseStatus;
-
+import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
+
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<ApiResponse<Void>> handleIllegalArgument(
-            IllegalArgumentException e) {
+            IllegalArgumentException ex) {
 
         return ResponseEntity
                 .badRequest()
-                .body(ApiResponse.error(400, e.getMessage()));
+                .body(ApiResponse.error(400, ex.getMessage()));
     }
-    @ExceptionHandler({
-        ProductStatusException.class,
-        ProductConflictException.class
-})
-@ResponseStatus(HttpStatus.CONFLICT)
-public ApiResponse<Void> handleProductConflict(RuntimeException ex) {
-    return new ApiResponse<>(409, ex.getMessage(), null);
-}
+
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<ApiResponse<Void>> handleValidation(
-            MethodArgumentNotValidException e) {
+            MethodArgumentNotValidException ex) {
 
-        String message = e.getBindingResult()
+        String message = ex.getBindingResult()
                 .getFieldErrors()
                 .stream()
                 .findFirst()
@@ -47,38 +38,60 @@ public ApiResponse<Void> handleProductConflict(RuntimeException ex) {
                 .badRequest()
                 .body(ApiResponse.error(400, message));
     }
+
+    @ExceptionHandler({
+            ProductStatusException.class,
+            ProductConflictException.class
+    })
+    @ResponseStatus(HttpStatus.CONFLICT)
+    public ApiResponse<Void> handleProductConflict(
+            RuntimeException ex) {
+
+        return ApiResponse.error(409, ex.getMessage());
+    }
+
+    @ExceptionHandler(ProductNotFoundException.class)
+    @ResponseStatus(HttpStatus.NOT_FOUND)
+    public ApiResponse<Void> handleProductNotFound(
+            ProductNotFoundException ex) {
+
+        return ApiResponse.error(404, ex.getMessage());
+    }
+
     @ExceptionHandler(NoResourceFoundException.class)
-        @ResponseStatus(HttpStatus.NOT_FOUND)
-        public ApiResponse<Void> handleNotFound(
-                NoResourceFoundException ex) {
+    @ResponseStatus(HttpStatus.NOT_FOUND)
+    public ApiResponse<Void> handleNotFound(
+            NoResourceFoundException ex) {
 
-        return new ApiResponse<>(
-                404,
-                "请求的资源不存在",
-                null
-        );
-        }
-        
-        @ExceptionHandler(ProductNotFoundException.class)
-        @ResponseStatus(HttpStatus.NOT_FOUND)
-        public ApiResponse<Void> handleProductNotFound(
-                ProductNotFoundException ex) {
+        return ApiResponse.error(404, "请求的资源不存在");
+    }
 
-        return new ApiResponse<>(404, ex.getMessage(), null);
-        }
+    @ExceptionHandler(EmailAlreadyRegisteredException.class)
+    @ResponseStatus(HttpStatus.CONFLICT)
+    public ApiResponse<Void> handleEmailAlreadyRegistered(
+            EmailAlreadyRegisteredException ex) {
+
+        return ApiResponse.error(409, ex.getMessage());
+    }
+
+    @ExceptionHandler(VerificationCodeLimitException.class)
+    public ResponseEntity<ApiResponse<Void>> handleVerificationLimit(
+            VerificationCodeLimitException ex) {
+
+        return ResponseEntity
+                .status(HttpStatus.TOO_MANY_REQUESTS)
+                .body(ApiResponse.error(
+                        429,
+                        "验证码请求暂时受限，请稍后重试"
+                ));
+    }
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ApiResponse<Void>> handleException(
-            Exception e) {
+            Exception ex) {
 
         return ResponseEntity
                 .status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(ApiResponse.error(500, "服务器内部错误"));
     }
-        @ExceptionHandler(EmailAlreadyRegisteredException.class)
-        @ResponseStatus(HttpStatus.CONFLICT)
-        public ApiResponse<Void> handleEmailAlreadyRegistered(
-                EmailAlreadyRegisteredException ex) {
-
-        return new ApiResponse<>(409, ex.getMessage(), null);
-        }
 }
