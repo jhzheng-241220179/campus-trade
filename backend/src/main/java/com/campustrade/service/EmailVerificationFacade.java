@@ -53,10 +53,24 @@ public void sendCode(String email) {
         return;
     }
 
+try {
     emailService.sendVerificationCode(
             user.getEmail(),
             issued.code()
     );
+} catch (org.springframework.mail.MailException ex) {
+
+    try {
+        verificationCodeService.invalidateFailedDelivery(
+                user.getId(),
+                issued.id()
+        );
+    } catch (RuntimeException cleanupEx) {
+        ex.addSuppressed(cleanupEx);
+    }
+
+    throw ex;
+}
 }
 
 

@@ -14,7 +14,15 @@ public class User {
     private String status;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
+    private LocalDateTime verificationLockedUntil;
+    public LocalDateTime getVerificationLockedUntil() {
+    return verificationLockedUntil;
+}
 
+    public void setVerificationLockedUntil(
+            LocalDateTime verificationLockedUntil) {
+        this.verificationLockedUntil = verificationLockedUntil;
+    }
     public Long getId() {
         return id;
     }

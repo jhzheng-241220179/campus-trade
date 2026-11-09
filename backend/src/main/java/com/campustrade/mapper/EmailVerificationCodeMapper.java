@@ -101,4 +101,16 @@ public interface EmailVerificationCodeMapper {
     LocalDateTime findLastIssuedAt(
             @Param("userId") Long userId
     );
+    @Update("""
+    UPDATE email_verification_codes
+    SET used_at = #{now}
+    WHERE id = #{id}
+      AND user_id = #{userId}
+      AND used_at IS NULL
+    """)
+int invalidateById(
+        @Param("id") Long id,
+        @Param("userId") Long userId,
+        @Param("now") LocalDateTime now
+);
 }
