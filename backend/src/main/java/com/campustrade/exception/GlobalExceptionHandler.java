@@ -2,7 +2,7 @@
 package com.campustrade.exception;
 
 import com.campustrade.common.ApiResponse;
-
+import org.springframework.security.core.AuthenticationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -94,4 +94,15 @@ public class GlobalExceptionHandler {
                 .status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(ApiResponse.error(500, "服务器内部错误"));
     }
+    @ExceptionHandler(AuthenticationException.class)
+public ResponseEntity<ApiResponse<Void>> handleAuthentication(
+        AuthenticationException ex) {
+
+    return ResponseEntity
+            .status(HttpStatus.UNAUTHORIZED)
+            .body(ApiResponse.error(
+                    401,
+                    "邮箱或密码错误，或账户不可登录"
+            ));
+}
 }
