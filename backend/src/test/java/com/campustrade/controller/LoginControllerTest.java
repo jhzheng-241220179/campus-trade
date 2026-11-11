@@ -285,4 +285,40 @@ class LoginControllerTest {
         )
         .andExpect(status().isForbidden());
     }
+
+@Test
+void successfulLoginShouldRotateExistingSessionId() throws Exception {
+
+    when(loginService.login(
+            "student@example.com",
+            "Password123!"
+    )).thenReturn(authenticatedUser());
+
+    MockHttpSession existingSession = new MockHttpSession();
+
+    String originalSessionId = existingSession.getId();
+
+    MvcResult result = mockMvc.perform(
+            post("/api/auth/login")
+                    .session(existingSession)
+                    .with(csrf())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(loginJson)
+    )
+    .andExpect(status().isOk())
+    .andReturn();
+
+    MockHttpSession resultingSession =
+            (MockHttpSession)
+                    result.getRequest().getSession(false);
+
+    assertNotNull(resultingSession);
+
+    assertNotEquals(
+            originalSessionId,
+            resultingSession.getId(),
+            "登录成功后应该更换 Session ID"
+    );
+}
+
 }
