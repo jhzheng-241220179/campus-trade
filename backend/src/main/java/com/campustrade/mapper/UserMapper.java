@@ -64,6 +64,20 @@ public interface UserMapper {
     @Options(useGeneratedKeys = true, keyProperty = "id")
     int insert(User user);
 
+@Select("""
+    SELECT
+        id,
+        nickname,
+        email,
+        role,
+        email_verified AS emailVerified
+    FROM users
+    WHERE email = #{email}
+    """)
+User findPublicProfileByEmail(
+        @Param("email") String email
+);
+
     @Select("""
         SELECT verification_failure_count
         FROM users

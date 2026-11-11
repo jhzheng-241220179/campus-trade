@@ -38,6 +38,14 @@ public AuthenticationManager authenticationManager(
             throws Exception {
 
         http
+            .logout(logout -> logout
+                    .logoutUrl("/api/auth/logout")
+                    .invalidateHttpSession(true)
+                    .clearAuthentication(true)
+                    .logoutSuccessHandler((request, response, authentication) -> {
+                        response.setStatus(204);
+                    })
+            )
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers(
                     HttpMethod.POST,

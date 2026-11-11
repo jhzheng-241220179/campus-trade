@@ -2,9 +2,11 @@
 package com.campustrade.controller;
 
 import com.campustrade.exception.GlobalExceptionHandler;
+import com.campustrade.exception.VerificationCodeLimitException;
+import com.campustrade.service.CurrentUserService;
 import com.campustrade.service.EmailVerificationFacade;
 import com.campustrade.service.VerificationCodeService;
-import com.campustrade.exception.VerificationCodeLimitException;
+
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -28,6 +30,9 @@ class AuthControllerTest {
     @Mock
     private EmailVerificationFacade facade;
 
+    @Mock
+    private CurrentUserService currentUserService;
+
     private MockMvc mockMvc;
 
     private LocalValidatorFactoryBean validator;
@@ -38,7 +43,9 @@ class AuthControllerTest {
         validator.afterPropertiesSet();
 
         mockMvc = MockMvcBuilders
-                .standaloneSetup(new AuthController(facade))
+                .standaloneSetup(
+                        new AuthController(facade, currentUserService)
+                )
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .setValidator(validator)
                 .build();
@@ -119,41 +126,40 @@ class AuthControllerTest {
         verifyNoInteractions(facade);
     }
 
-@Test
-void sendCodeTooFrequentlyShouldReturn429() throws Exception {
+    @Test
+    void sendCodeTooFrequentlyShouldReturn429() throws Exception {
 
-    doThrow(new VerificationCodeLimitException(
-            "验证码申请过于频繁，请稍后重试"
-    )).when(facade).sendCode("student@example.com");
+        doThrow(new VerificationCodeLimitException(
+                "验证码申请过于频繁，请稍后重试"
+        )).when(facade).sendCode("student@example.com");
 
-    mockMvc.perform(post("/api/auth/email/send-code")
-            .contentType(MediaType.APPLICATION_JSON)
-            .content("""
-                {"email":"student@example.com"}
-                """))
-        .andExpect(status().isTooManyRequests())
-        .andExpect(jsonPath("$.code").value(429))
-        .andExpect(jsonPath("$.message").value(
-                "验证码请求暂时受限，请稍后重试"
-        ));
+        mockMvc.perform(post("/api/auth/email/send-code")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {"email":"student@example.com"}
+                    """))
+            .andExpect(status().isTooManyRequests())
+            .andExpect(jsonPath("$.code").value(429))
+            .andExpect(jsonPath("$.message").value(
+                    "验证码请求暂时受限，请稍后重试"
+            ));
 
-    verify(facade).sendCode("student@example.com");
-}
+        verify(facade).sendCode("student@example.com");
+    }
 
-@Test
-void unexpectedExceptionShouldReturn500() throws Exception {
+    @Test
+    void unexpectedExceptionShouldReturn500() throws Exception {
 
-    doThrow(new IllegalStateException("数据库内部状态异常"))
-            .when(facade).sendCode("student@example.com");
+        doThrow(new IllegalStateException("数据库内部状态异常"))
+                .when(facade).sendCode("student@example.com");
 
-    mockMvc.perform(post("/api/auth/email/send-code")
-            .contentType(MediaType.APPLICATION_JSON)
-            .content("""
-                {"email":"student@example.com"}
-                """))
-        .andExpect(status().isInternalServerError())
-        .andExpect(jsonPath("$.code").value(500))
-        .andExpect(jsonPath("$.message").value("服务器内部错误"));
-}
-
+        mockMvc.perform(post("/api/auth/email/send-code")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {"email":"student@example.com"}
+                    """))
+            .andExpect(status().isInternalServerError())
+            .andExpect(jsonPath("$.code").value(500))
+            .andExpect(jsonPath("$.message").value("服务器内部错误"));
+    }
 }
