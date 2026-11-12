@@ -298,6 +298,11 @@ class VerificationCodeServiceTest {
         when(userMapper.incrementVerificationFailureCount(USER_ID))
                 .thenReturn(1);
 
+        when(userMapper.lockVerification(
+                eq(USER_ID),
+                any(LocalDateTime.class)))
+                .thenReturn(1);
+
         VerificationCodeService.VerifyResult first =
                 service.verifyCode(USER_ID, "999999");
 
@@ -316,6 +321,12 @@ class VerificationCodeServiceTest {
 
         verify(userMapper, times(1))
                 .incrementVerificationFailureCount(USER_ID);
+
+        verify(userMapper, times(1))
+                .lockVerification(
+                        eq(USER_ID),
+                        any(LocalDateTime.class)
+                );
 
         verify(codeMapper, never())
                 .markUsed(anyLong(), any(LocalDateTime.class));
