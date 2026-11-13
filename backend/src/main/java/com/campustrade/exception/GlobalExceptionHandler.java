@@ -1,6 +1,6 @@
 
 package com.campustrade.exception;
-
+import org.springframework.web.server.ResponseStatusException;
 import com.campustrade.common.ApiResponse;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.http.HttpStatus;
@@ -22,7 +22,22 @@ public class GlobalExceptionHandler {
                 .badRequest()
                 .body(ApiResponse.error(400, ex.getMessage()));
     }
+    @ExceptionHandler(ResponseStatusException.class)
+        public ResponseEntity<ApiResponse<Void>> handleResponseStatusException(
+                ResponseStatusException ex) {
 
+        int status = ex.getStatusCode().value();
+
+        String message = ex.getReason();
+
+        if (message == null || message.isBlank()) {
+                message = "请求处理失败";
+        }
+
+        return ResponseEntity
+                .status(ex.getStatusCode())
+                .body(ApiResponse.error(status, message));
+        }
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<ApiResponse<Void>> handleValidation(
             MethodArgumentNotValidException ex) {
