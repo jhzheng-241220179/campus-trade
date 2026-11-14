@@ -5,6 +5,7 @@ import com.campustrade.exception.GlobalExceptionHandler;
 import com.campustrade.exception.VerificationCodeLimitException;
 import com.campustrade.service.CurrentUserService;
 import com.campustrade.service.EmailVerificationFacade;
+import com.campustrade.service.UserService;
 import com.campustrade.service.VerificationCodeService;
 
 import org.junit.jupiter.api.AfterEach;
@@ -33,6 +34,9 @@ class AuthControllerTest {
     @Mock
     private CurrentUserService currentUserService;
 
+    @Mock
+    private UserService userService;
+
     private MockMvc mockMvc;
 
     private LocalValidatorFactoryBean validator;
@@ -44,7 +48,11 @@ class AuthControllerTest {
 
         mockMvc = MockMvcBuilders
                 .standaloneSetup(
-                        new AuthController(facade, currentUserService)
+                        new AuthController(
+                                facade,
+                                currentUserService,
+                                userService
+                        )
                 )
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .setValidator(validator)
