@@ -21,8 +21,8 @@ public class SecurityConfig {
     @Bean
     public AuthenticationManager authenticationManager(
             UserDetailsService userDetailsService,
-            PasswordEncoder passwordEncoder) {
-
+            PasswordEncoder passwordEncoder
+    ) {
         DaoAuthenticationProvider provider =
                 new DaoAuthenticationProvider(userDetailsService);
 
@@ -37,17 +37,20 @@ public class SecurityConfig {
     }
 
     @Bean
-    public SecurityFilterChain securityFilterChain(HttpSecurity http)
-            throws Exception {
+    public SecurityFilterChain securityFilterChain(
+            HttpSecurity http
+    ) throws Exception {
 
         http
                 .logout(logout -> logout
                         .logoutUrl("/api/auth/logout")
                         .invalidateHttpSession(true)
                         .clearAuthentication(true)
-                        .logoutSuccessHandler((request, response, authentication) -> {
-                            response.setStatus(204);
-                        })
+                        .logoutSuccessHandler(
+                                (request, response, authentication) -> {
+                                    response.setStatus(204);
+                                }
+                        )
                 )
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(
@@ -64,30 +67,44 @@ public class SecurityConfig {
                                 "/api/auth/email/send-code",
                                 "/api/auth/email/verify"
                         ).permitAll()
-                        .requestMatchers(HttpMethod.GET, "/api/products")
-                        .permitAll()
-                        .requestMatchers(HttpMethod.GET, "/api/products/{id}")
-                        .permitAll()
+                        .requestMatchers(
+                                HttpMethod.GET,
+                                "/api/products",
+                                "/api/products/{id}",
+                                "/api/products/{productId}/images",
+                                "/api/products/{productId}/images/{imageId}"
+                        ).permitAll()
                         .anyRequest()
                         .authenticated()
                 )
-                .csrf(csrf -> csrf.ignoringRequestMatchers(request -> {
-                    if (!"POST".equalsIgnoreCase(request.getMethod())) {
-                        return false;
-                    }
+                .csrf(csrf -> csrf.ignoringRequestMatchers(
+                        request -> {
+                            if (!"POST".equalsIgnoreCase(
+                                    request.getMethod()
+                            )) {
+                                return false;
+                            }
 
-                    String path = request.getRequestURI()
-                            .substring(request.getContextPath().length());
+                            String path = request.getRequestURI()
+                                    .substring(
+                                            request.getContextPath()
+                                                    .length()
+                                    );
 
-                    return "/api/auth/email/send-code".equals(path)
-                            || "/api/auth/email/verify".equals(path);
-                }))
+                            return "/api/auth/email/send-code"
+                                    .equals(path)
+                                    || "/api/auth/email/verify"
+                                    .equals(path);
+                        }
+                ))
                 .httpBasic(basic -> basic.disable())
                 .formLogin(form -> form.disable())
                 .exceptionHandling(ex -> ex
-                        .authenticationEntryPoint((request, response, authException) -> {
-                            response.sendError(401);
-                        })
+                        .authenticationEntryPoint(
+                                (request, response, authException) -> {
+                                    response.sendError(401);
+                                }
+                        )
                 );
 
         return http.build();

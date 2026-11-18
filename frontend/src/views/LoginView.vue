@@ -1,27 +1,45 @@
 
 <script setup lang="ts">
-import { reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, reactive, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import axios from 'axios'
 
 import { login } from '../api/auth'
 import { clearCsrfToken } from '../api/http'
 import { useAuthStore } from '../stores/auth'
 
+const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
 
 const form = reactive({
-  email: '',
+  email:
+    typeof route.query.email === 'string'
+      ? route.query.email
+      : '',
   password: '',
 })
 
-const loading = ref(false)
-const showPassword = ref(false)
+const submitting = ref(false)
 const errorMessage = ref('')
 
+const redirectTarget = computed(() => {
+  const redirect = route.query.redirect
+
+  if (
+    typeof redirect === 'string' &&
+    redirect.startsWith('/') &&
+    !redirect.startsWith('//') &&
+    !redirect.startsWith('/\\')
+  ) {
+    return redirect
+  }
+
+  return '/'
+})
+
 async function handleLogin() {
-  if (loading.value) return
+  if (submitting.value) return
 
   errorMessage.value = ''
 
@@ -30,142 +48,142 @@ async function handleLogin() {
     return
   }
 
-  loading.value = true
-
-  let loginSucceeded = false
+  submitting.value = true
 
   try {
-    // 1. 提交邮箱和密码
     await login({
-      email: form.email.trim().toLowerCase(),
+      email: form.email.trim(),
       password: form.password,
     })
 
-    loginSucceeded = true
-
-    // 2. 登录后旧 CSRF Token 可能失效
+    // 登录后 Session 可能发生轮换，清除旧 CSRF 缓存。
     clearCsrfToken()
 
-    // 3. 从后端恢复当前用户信息
     await authStore.fetchCurrentUser()
 
     if (!authStore.isAuthenticated) {
-      errorMessage.value = '登录状态获取失败，请刷新后重试'
-      return
+      throw new Error('登录成功，但未能恢复用户状态')
     }
 
-    // 4. 登录完成，跳转首页
-    await router.replace('/')
+    await router.replace(redirectTarget.value)
   } catch (error) {
-    if (loginSucceeded) {
-      errorMessage.value =
-        '登录已提交成功，但用户信息获取失败，请刷新后重试'
-    } else if (axios.isAxiosError(error)) {
-      const status = error.response?.status
-
-      if (status === 401) {
-        errorMessage.value =
-          '邮箱或密码错误，或账户尚未激活'
+    if (axios.isAxiosError(error)) {
+      if (error.response?.status === 401) {
+        errorMessage.value = '邮箱或密码错误，或账户尚未激活'
       } else {
         errorMessage.value =
-          error.response?.data?.message ||
-          '登录失败，请稍后重试'
+          error.response?.data?.message || '登录失败，请稍后重试'
       }
     } else {
-      errorMessage.value = '登录失败，请稍后重试'
+      errorMessage.value =
+        error instanceof Error
+          ? error.message
+          : '登录失败，请稍后重试'
     }
   } finally {
-    loading.value = false
+    submitting.value = false
   }
 }
 </script>
 
 <template>
-  <main class="login-page">
-    <div class="login-card">
-      <RouterLink to="/" class="brand">
-        <span class="brand-icon">C</span>
-        <span>CampusTrade</span>
-      </RouterLink>
+  <main class="auth-page">
+    <div class="auth-container">
+      <header class="auth-header">
+        <RouterLink to="/" class="brand">
+          <span class="brand-icon">C</span>
+          <span>CampusTrade</span>
+        </RouterLink>
 
-      <div class="heading">
-        <p class="eyebrow">WELCOME BACK</p>
-        <h1>欢迎回来</h1>
-        <p>登录 CampusTrade，继续发现校园好物。</p>
-      </div>
+        <RouterLink to="/" class="back-link">
+          返回首页
+        </RouterLink>
+      </header>
 
-      <form @submit.prevent="handleLogin">
-        <label for="email">邮箱地址</label>
-        <input
-          id="email"
-          v-model="form.email"
-          type="email"
-          autocomplete="email"
-          placeholder="请输入邮箱地址"
-          :disabled="loading"
-        />
-
-        <label for="password">登录密码</label>
-        <div class="password-field">
-          <input
-            id="password"
-            v-model="form.password"
-            :type="showPassword ? 'text' : 'password'"
-            autocomplete="current-password"
-            placeholder="请输入密码"
-            :disabled="loading"
-          />
-
-          <button
-            type="button"
-            class="password-toggle"
-            @click="showPassword = !showPassword"
-          >
-            {{ showPassword ? '隐藏' : '显示' }}
-          </button>
+      <section class="auth-content">
+        <div class="auth-heading">
+          <p class="eyebrow">WELCOME BACK</p>
+          <h1>欢迎回来</h1>
+          <p>登录 CampusTrade，继续你的校园好物之旅。</p>
         </div>
 
-        <p
-          v-if="errorMessage"
-          class="error-message"
-          role="alert"
+        <form
+          class="auth-card"
+          @submit.prevent="handleLogin"
         >
-          {{ errorMessage }}
-        </p>
+          <div class="field">
+            <label for="login-email">邮箱地址</label>
+            <input
+              id="login-email"
+              v-model="form.email"
+              type="email"
+              autocomplete="username"
+              placeholder="请输入注册邮箱"
+              required
+            />
+          </div>
 
-        <button
-          type="submit"
-          class="submit-button"
-          :disabled="loading"
-        >
-          {{ loading ? '正在登录...' : '登录 CampusTrade' }}
-        </button>
-      </form>
+          <div class="field">
+            <label for="login-password">登录密码</label>
+            <input
+              id="login-password"
+              v-model="form.password"
+              type="password"
+              autocomplete="current-password"
+              placeholder="请输入密码"
+              required
+            />
+          </div>
 
-      <p class="register-link">
-        还没有账户？
-        <RouterLink to="/register">立即注册</RouterLink>
-      </p>
+          <p
+            v-if="errorMessage"
+            class="error-message"
+            role="alert"
+          >
+            {{ errorMessage }}
+          </p>
+
+          <button
+            type="submit"
+            class="submit-button"
+            :disabled="submitting"
+          >
+            {{ submitting ? '登录中...' : '登录' }}
+          </button>
+
+          <p class="register-tip">
+            还没有账户？
+            <RouterLink to="/register">
+              立即注册
+            </RouterLink>
+          </p>
+        </form>
+      </section>
     </div>
   </main>
 </template>
 
 <style scoped>
-.login-page {
+.auth-page {
   min-height: 100vh;
-  display: grid;
-  place-items: center;
-  padding: 36px 20px;
   background: #f7f8fc;
+  color: #202536;
 }
 
-.login-card {
-  width: min(100%, 480px);
-  padding: 42px;
-  border: 1px solid #e5eaf3;
-  border-radius: 22px;
-  background: white;
+.auth-container {
+  width: min(1000px, 100%);
+  margin: 0 auto;
+  padding: 0 24px 80px;
   box-sizing: border-box;
+}
+
+.auth-header {
+  min-height: 84px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  border-bottom: 1px solid #e5eaf3;
 }
 
 .brand {
@@ -179,17 +197,29 @@ async function handleLogin() {
 }
 
 .brand-icon {
-  width: 37px;
-  height: 37px;
   display: grid;
   place-items: center;
+  width: 38px;
+  height: 38px;
   border-radius: 10px;
   background: #4169e1;
-  color: white;
+  color: #ffffff;
 }
 
-.heading {
-  margin: 40px 0 34px;
+.back-link {
+  color: #64748b;
+  font-size: 14px;
+  text-decoration: none;
+}
+
+.auth-content {
+  width: min(440px, 100%);
+  margin: 76px auto 0;
+}
+
+.auth-heading {
+  margin-bottom: 28px;
+  text-align: center;
 }
 
 .eyebrow {
@@ -199,120 +229,105 @@ async function handleLogin() {
   letter-spacing: 2px;
 }
 
-.heading h1 {
-  margin: 12px 0;
-  color: #202536;
-  font-size: 30px;
-  font-weight: 750;
+.auth-heading h1 {
+  margin: 14px 0;
+  font-size: 36px;
 }
 
-.heading > p:last-child {
+.auth-heading > p:last-child {
   color: #788196;
   font-size: 14px;
   line-height: 1.8;
 }
 
-form {
+.auth-card {
   display: flex;
   flex-direction: column;
+  gap: 24px;
+  padding: 36px;
+  border: 1px solid #e5eaf3;
+  border-radius: 18px;
+  background: #ffffff;
+  box-shadow: 0 16px 40px rgba(30, 48, 90, 0.04);
 }
 
-label {
-  margin-bottom: 10px;
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.field label {
   color: #334155;
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 650;
 }
 
-form > input,
-.password-field input {
+.field input {
   width: 100%;
-  height: 48px;
-  padding: 0 14px;
-  margin-bottom: 24px;
-  border: 1px solid #dce3ef;
+  padding: 13px 14px;
+  box-sizing: border-box;
+  border: 1px solid #dce3ee;
   border-radius: 9px;
-  background: white;
+  outline: none;
+  background: #ffffff;
   color: #202536;
   font: inherit;
   font-size: 14px;
-  box-sizing: border-box;
 }
 
-input:focus {
+.field input:focus {
   border-color: #4169e1;
-  outline: 2px solid rgba(65, 105, 225, 0.12);
-}
-
-.password-field {
-  position: relative;
-}
-
-.password-field input {
-  padding-right: 74px;
-}
-
-.password-toggle {
-  position: absolute;
-  right: 14px;
-  top: 15px;
-  border: none;
-  background: transparent;
-  color: #4169e1;
-  font-size: 13px;
-  cursor: pointer;
 }
 
 .error-message {
-  padding: 12px;
-  margin: 0 0 20px;
-  border-radius: 8px;
-  background: #fef3f2;
-  color: #b42318;
+  margin: 0;
+  color: #dc2626;
   font-size: 13px;
-  line-height: 1.6;
+  line-height: 1.7;
 }
 
 .submit-button {
-  height: 48px;
-  border: none;
+  width: 100%;
+  padding: 14px 20px;
+  border: 0;
   border-radius: 9px;
   background: #4169e1;
-  color: white;
+  color: #ffffff;
   font-size: 15px;
   font-weight: 650;
   cursor: pointer;
 }
 
-.submit-button:hover:not(:disabled) {
-  background: #3155c8;
-}
-
 .submit-button:disabled {
-  opacity: 0.65;
+  opacity: 0.6;
   cursor: not-allowed;
 }
 
-.register-link {
-  margin: 30px 0 0;
+.register-tip {
+  margin: 0;
+  color: #64748b;
+  font-size: 13px;
   text-align: center;
-  color: #788196;
-  font-size: 14px;
 }
 
-.register-link a {
+.register-tip a {
   color: #4169e1;
-  font-weight: 650;
   text-decoration: none;
 }
 
-@media (max-width: 520px) {
-  .login-card {
-    padding: 30px 24px;
+@media (max-width: 600px) {
+  .auth-container {
+    padding-left: 16px;
+    padding-right: 16px;
   }
 
-  .heading h1 {
-    font-size: 26px;
+  .auth-content {
+    margin-top: 48px;
+  }
+
+  .auth-card {
+    padding: 24px;
   }
 }
 </style>
