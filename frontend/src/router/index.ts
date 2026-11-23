@@ -1,4 +1,3 @@
-
 import {
   createRouter,
   createWebHistory,
@@ -15,6 +14,7 @@ import ProductListView from '../views/ProductListView.vue'
 import ProductDetailView from '../views/ProductDetailView.vue'
 import ProductPublishView from '../views/ProductPublishView.vue'
 import MyProductsView from '../views/MyProductsView.vue'
+import ProductEditView from '../views/ProductEditView.vue'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -67,6 +67,14 @@ const router = createRouter({
       },
     },
     {
+      path: '/products/mine/:id/edit',
+      name: 'product-edit',
+      component: ProductEditView,
+      meta: {
+        requiresAuth: true,
+      },
+    },
+    {
       path: '/products/:id',
       name: 'product-detail',
       component: ProductDetailView,
@@ -85,7 +93,7 @@ router.beforeEach(async (to) => {
     try {
       await authStore.fetchCurrentUser()
     } catch {
-      // Session 失效或者尚未登录时，交给下方判断。
+      // Session 失效时交给下方登录状态判断
     }
   }
 

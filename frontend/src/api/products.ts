@@ -26,6 +26,10 @@ export interface ProductCreateRequest {
   contact: string
 }
 
+export interface ProductUpdateRequest extends ProductCreateRequest {
+  version: number
+}
+
 export interface ProductImage {
   id: number
   productId: number
@@ -56,6 +60,24 @@ export async function getMyProducts(): Promise<Product[]> {
   return response.data.data
 }
 
+export async function getMyDraft(
+  id: number,
+): Promise<Product> {
+  const response =
+    await api.get<ApiResponse<Product>>(
+      `/products/mine/${id}`,
+    )
+
+  return response.data.data
+}
+
+export async function updateDraft(
+  id: number,
+  request: ProductUpdateRequest,
+): Promise<void> {
+  await api.put(`/products/${id}`, request)
+}
+
 export async function createProduct(
   request: ProductCreateRequest,
 ): Promise<number> {
@@ -69,6 +91,12 @@ export async function publishProduct(
   id: number,
 ): Promise<void> {
   await api.post(`/products/${id}/publish`)
+}
+
+export async function offShelfProduct(
+  id: number,
+): Promise<void> {
+  await api.post(`/products/${id}/off-shelf`)
 }
 
 export async function getProductImages(

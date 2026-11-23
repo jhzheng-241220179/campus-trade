@@ -119,4 +119,19 @@ public interface ProductMapper {
             @Param("sellerId") Long sellerId,
             @Param("version") Integer version
     );
+
+    @Update("""
+            UPDATE products
+            SET status = 'OFF_SHELF',
+                version = version + 1
+            WHERE id = #{id}
+              AND seller_id = #{sellerId}
+              AND status = 'PUBLISHED'
+              AND version = #{version}
+            """)
+    int offShelfOwnedPublished(
+            @Param("id") Long id,
+            @Param("sellerId") Long sellerId,
+            @Param("version") Integer version
+    );
 }

@@ -1,6 +1,10 @@
 
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue'
+import {
+  onMounted,
+  onUnmounted,
+  ref,
+} from 'vue'
 import { useRoute } from 'vue-router'
 import axios from 'axios'
 
@@ -8,6 +12,7 @@ import {
   deleteProductImage,
   getMyProducts,
   getProductImages,
+  offShelfProduct,
   publishProduct,
   uploadProductImage,
 } from '../api/products'
@@ -22,35 +27,58 @@ const route = useRoute()
 const products = ref<Product[]>([])
 const imagesByProduct =
   ref<Record<number, ProductImage[]>>({})
-
 const selectedFiles =
   ref<Record<number, File | null>>({})
-
 const previewUrls =
   ref<Record<number, string>>({})
-
 const imageErrors =
   ref<Record<number, string>>({})
 
 const loading = ref(true)
 const errorMessage = ref('')
 const actionMessage = ref('')
-
 const busyProductId = ref<number | null>(null)
 
 const createdId = Number(route.query.created)
+const updatedId = Number(route.query.updated)
 
-if (Number.isSafeInteger(createdId) && createdId > 0) {
+if (
+  Number.isSafeInteger(createdId) &&
+  createdId > 0
+) {
   actionMessage.value =
-    `商品 #${createdId} 已保存为草稿。请上传图片，然后确认发布。`
+    `商品 #${createdId} 已保存为草稿。`
 }
 
-function formatPrice(price: number | string): string {
+if (
+  Number.isSafeInteger(updatedId) &&
+  updatedId > 0
+) {
+  actionMessage.value =
+    `商品 #${updatedId} 的草稿修改已保存。`
+}
+
+function formatPrice(
+  price: number | string,
+): string {
   const value = Number(price)
 
   return Number.isFinite(value)
     ? `¥ ${value.toFixed(2)}`
     : '价格待确认'
+}
+
+function statusLabel(status: string): string {
+  switch (status) {
+    case 'DRAFT':
+      return '草稿'
+    case 'PUBLISHED':
+      return '已发布'
+    case 'OFF_SHELF':
+      return '已下架'
+    default:
+      return status
+  }
 }
 
 function getErrorMessage(
@@ -60,6 +88,14 @@ function getErrorMessage(
   if (axios.isAxiosError(error)) {
     if (error.response?.status === 401) {
       return '登录已失效，请重新登录'
+    }
+
+    if (error.response?.status === 403) {
+      return '无权操作该商品'
+    }
+
+    if (error.response?.status === 409) {
+      return '商品状态已发生变化，请刷新后重试'
     }
 
     const message = error.response?.data?.message
@@ -73,10 +109,10 @@ function getErrorMessage(
 }
 
 function releasePreview(productId: number) {
-  const existing = previewUrls.value[productId]
+  const url = previewUrls.value[productId]
 
-  if (existing) {
-    URL.revokeObjectURL(existing)
+  if (url) {
+    URL.revokeObjectURL(url)
   }
 
   delete previewUrls.value[productId]
@@ -93,27 +129,32 @@ function onFileSelected(
   const input = event.target as HTMLInputElement
   const file = input.files?.[0]
 
-  if (!file) return
+  if (!file) {
+    return
+  }
 
-  const allowedExtensions = /\.(jpg|jpeg|png|webp)$/i
-
-  if (!allowedExtensions.test(file.name)) {
+  if (!/\.(jpg|jpeg|png|webp)$/i.test(file.name)) {
     imageErrors.value[productId] =
       '仅支持 JPG、JPEG、PNG 和 WebP 图片'
+
     input.value = ''
     return
   }
 
   if (file.size > 5 * 1024 * 1024) {
     imageErrors.value[productId] =
-      '单张图片不能超过5MB'
+      '单张图片不能超过 5MB'
+
     input.value = ''
     return
   }
 
-  if ((imagesByProduct.value[productId]?.length ?? 0) >= 5) {
+  if (
+    (imagesByProduct.value[productId]?.length ?? 0) >= 5
+  ) {
     imageErrors.value[productId] =
-      '每件商品最多上传5张图片'
+      '每件商品最多上传 5 张图片'
+
     input.value = ''
     return
   }
@@ -122,7 +163,6 @@ function onFileSelected(
   previewUrls.value[productId] =
     URL.createObjectURL(file)
 
-  // 清空选择框，使同一文件也可以重新选择。
   input.value = ''
 }
 
@@ -137,8 +177,10 @@ async function loadProductImages(productId: number) {
 
     delete imageErrors.value[productId]
   } catch (error) {
-    imageErrors.value[productId] =
-      getErrorMessage(error, '图片列表加载失败')
+    imageErrors.value[productId] = getErrorMessage(
+      error,
+      '图片列表加载失败',
+    )
 
     imagesByProduct.value[productId] = []
   }
@@ -167,13 +209,20 @@ async function loadProducts() {
   }
 }
 
+async function refreshProducts() {
+  products.value = await getMyProducts()
+}
+
 async function handleUpload(product: Product) {
-  if (busyProductId.value !== null) return
+  if (busyProductId.value !== null) {
+    return
+  }
 
   const file = selectedFiles.value[product.id]
 
   if (!file) {
-    imageErrors.value[product.id] = '请先选择图片'
+    imageErrors.value[product.id] =
+      '请先选择图片'
     return
   }
 
@@ -191,10 +240,8 @@ async function handleUpload(product: Product) {
     actionMessage.value =
       `“${product.title}”的图片已上传`
   } catch (error) {
-    imageErrors.value[product.id] = getErrorMessage(
-      error,
-      '图片上传失败',
-    )
+    imageErrors.value[product.id] =
+      getErrorMessage(error, '图片上传失败')
   } finally {
     busyProductId.value = null
   }
@@ -204,15 +251,17 @@ async function handleDeleteImage(
   product: Product,
   image: ProductImage,
 ) {
-  if (busyProductId.value !== null) return
+  if (busyProductId.value !== null) {
+    return
+  }
 
   if (!window.confirm('确认删除这张图片吗？')) {
     return
   }
 
   busyProductId.value = product.id
-  actionMessage.value = ''
   errorMessage.value = ''
+  actionMessage.value = ''
 
   try {
     await deleteProductImage(
@@ -223,23 +272,23 @@ async function handleDeleteImage(
     await loadProductImages(product.id)
     actionMessage.value = '图片已删除'
   } catch (error) {
-    imageErrors.value[product.id] = getErrorMessage(
-      error,
-      '删除图片失败',
-    )
+    imageErrors.value[product.id] =
+      getErrorMessage(error, '删除图片失败')
   } finally {
     busyProductId.value = null
   }
 }
 
 async function handlePublish(product: Product) {
-  if (busyProductId.value !== null) return
+  if (busyProductId.value !== null) {
+    return
+  }
 
-  if (
-    !window.confirm(
-      `确认发布“${product.title}”吗？发布后暂不能修改图片。`,
-    )
-  ) {
+  const confirmed = window.confirm(
+    `确认发布“${product.title}”吗？发布后暂不能编辑商品。`,
+  )
+
+  if (!confirmed) {
     return
   }
 
@@ -250,17 +299,50 @@ async function handlePublish(product: Product) {
   try {
     await publishProduct(product.id)
 
+    await refreshProducts()
+    releasePreview(product.id)
+
     actionMessage.value =
       `“${product.title}”已成功发布`
-
-    const result = await getMyProducts()
-    products.value = result
-
-    releasePreview(product.id)
   } catch (error) {
     errorMessage.value = getErrorMessage(
       error,
       '商品发布失败',
+    )
+  } finally {
+    busyProductId.value = null
+  }
+}
+
+async function handleOffShelf(product: Product) {
+  if (busyProductId.value !== null) {
+    return
+  }
+
+  const confirmed = window.confirm(
+    `确认下架“${product.title}”吗？\n\n` +
+    '下架后，该商品将从公开商品广场移除。' +
+    '商品记录和图片会保留。',
+  )
+
+  if (!confirmed) {
+    return
+  }
+
+  busyProductId.value = product.id
+  errorMessage.value = ''
+  actionMessage.value = ''
+
+  try {
+    await offShelfProduct(product.id)
+    await refreshProducts()
+
+    actionMessage.value =
+      `“${product.title}”已成功下架`
+  } catch (error) {
+    errorMessage.value = getErrorMessage(
+      error,
+      '商品下架失败',
     )
   } finally {
     busyProductId.value = null
@@ -272,9 +354,9 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
-  Object.values(previewUrls.value).forEach((url) => {
-    URL.revokeObjectURL(url)
-  })
+  Object.values(previewUrls.value).forEach(
+    (url) => URL.revokeObjectURL(url),
+  )
 })
 </script>
 
@@ -295,10 +377,16 @@ onUnmounted(() => {
         <div>
           <p class="eyebrow">MY PRODUCTS</p>
           <h1>我的商品</h1>
-          <p>管理商品草稿、上传图片并确认发布。</p>
+          <p>
+            管理草稿、编辑信息、上传图片、
+            发布商品与下架商品。
+          </p>
         </div>
 
-        <RouterLink to="/products/new" class="primary-link">
+        <RouterLink
+          to="/products/new"
+          class="primary-link"
+        >
           + 创建商品
         </RouterLink>
       </section>
@@ -324,11 +412,18 @@ onUnmounted(() => {
       </div>
 
       <div
-        v-else-if="!errorMessage && products.length === 0"
+        v-else-if="
+          !errorMessage &&
+          products.length === 0
+        "
         class="state-panel"
       >
         <h2>还没有商品</h2>
-        <p>创建一件闲置商品，开始使用 CampusTrade。</p>
+        <p>
+          创建一件闲置商品，
+          开始使用 CampusTrade。
+        </p>
+
         <RouterLink to="/products/new">
           创建商品
         </RouterLink>
@@ -348,25 +443,20 @@ onUnmounted(() => {
                 <span
                   class="status"
                   :class="{
-                    published: product.status === 'PUBLISHED',
+                    published:
+                      product.status === 'PUBLISHED',
+                    offShelf:
+                      product.status === 'OFF_SHELF',
                   }"
                 >
-                  {{
-                    product.status === 'PUBLISHED'
-                      ? '已发布'
-                      : product.status === 'DRAFT'
-                        ? '草稿'
-                        : product.status
-                  }}
+                  {{ statusLabel(product.status) }}
                 </span>
               </div>
 
               <p>
                 {{ product.category }}
-                ·
-                {{ product.conditionLevel }}
-                ·
-                #{{ product.id }}
+                · {{ product.conditionLevel }}
+                · #{{ product.id }}
               </p>
 
               <strong class="price">
@@ -375,27 +465,66 @@ onUnmounted(() => {
             </div>
 
             <div class="heading-actions">
-              <button
+              <template
                 v-if="product.status === 'DRAFT'"
-                type="button"
-                class="primary-button"
-                :disabled="busyProductId !== null"
-                @click="handlePublish(product)"
               >
-                {{
-                  busyProductId === product.id
-                    ? '处理中...'
-                    : '确认发布'
-                }}
-              </button>
+                <RouterLink
+                  :to="
+                    `/products/mine/${product.id}/edit`
+                  "
+                  class="primary-link"
+                >
+                  编辑草稿
+                </RouterLink>
 
-              <RouterLink
-                v-else-if="product.status === 'PUBLISHED'"
-                :to="`/products/${product.id}`"
-                class="primary-link"
+                <button
+                  type="button"
+                  class="primary-button"
+                  :disabled="busyProductId !== null"
+                  @click="handlePublish(product)"
+                >
+                  {{
+                    busyProductId === product.id
+                      ? '处理中...'
+                      : '确认发布'
+                  }}
+                </button>
+              </template>
+
+              <template
+                v-else-if="
+                  product.status === 'PUBLISHED'
+                "
               >
-                查看商品
-              </RouterLink>
+                <RouterLink
+                  :to="`/products/${product.id}`"
+                  class="secondary-link"
+                >
+                  查看商品
+                </RouterLink>
+
+                <button
+                  type="button"
+                  class="danger-button"
+                  :disabled="busyProductId !== null"
+                  @click="handleOffShelf(product)"
+                >
+                  {{
+                    busyProductId === product.id
+                      ? '处理中...'
+                      : '下架商品'
+                  }}
+                </button>
+              </template>
+
+              <span
+                v-else-if="
+                  product.status === 'OFF_SHELF'
+                "
+                class="off-shelf-note"
+              >
+                已下架，当前不可公开查看
+              </span>
             </div>
           </div>
 
@@ -404,16 +533,23 @@ onUnmounted(() => {
               <h3>商品图片</h3>
 
               <span>
-                {{ imagesByProduct[product.id]?.length ?? 0 }} / 5
+                {{
+                  imagesByProduct[product.id]
+                    ?.length ?? 0
+                }} / 5
               </span>
             </div>
 
             <div
-              v-if="imagesByProduct[product.id]?.length"
+              v-if="
+                imagesByProduct[product.id]?.length
+              "
               class="image-grid"
             >
               <div
-                v-for="image in imagesByProduct[product.id]"
+                v-for="
+                  image in imagesByProduct[product.id]
+                "
                 :key="image.id"
                 class="image-item"
               >
@@ -423,11 +559,15 @@ onUnmounted(() => {
                 />
 
                 <button
-                  v-if="product.status === 'DRAFT'"
+                  v-if="
+                    product.status === 'DRAFT'
+                  "
                   type="button"
                   class="delete-image"
                   :disabled="busyProductId !== null"
-                  @click="handleDeleteImage(product, image)"
+                  @click="
+                    handleDeleteImage(product, image)
+                  "
                 >
                   删除
                 </button>
@@ -438,7 +578,9 @@ onUnmounted(() => {
               暂无商品图片。
             </p>
 
-            <template v-if="product.status === 'DRAFT'">
+            <template
+              v-if="product.status === 'DRAFT'"
+            >
               <div
                 v-if="previewUrls[product.id]"
                 class="preview-area"
@@ -454,19 +596,31 @@ onUnmounted(() => {
               <div class="upload-controls">
                 <label class="file-label">
                   选择图片
+
                   <input
                     type="file"
-                    accept="image/jpeg,image/png,image/webp"
+                    accept="
+                      image/jpeg,image/png,image/webp
+                    "
                     :disabled="
                       busyProductId !== null ||
-                      (imagesByProduct[product.id]?.length ?? 0) >= 5
+                      (
+                        imagesByProduct[product.id]
+                          ?.length ?? 0
+                      ) >= 5
                     "
-                    @change="onFileSelected($event, product.id)"
+                    @change="
+                      onFileSelected(
+                        $event,
+                        product.id,
+                      )
+                    "
                   />
                 </label>
 
                 <span class="hint">
-                  JPEG / PNG / WebP，单张不超过5MB
+                  JPEG / PNG / WebP，
+                  单张不超过 5MB
                 </span>
 
                 <button
@@ -475,7 +629,10 @@ onUnmounted(() => {
                   :disabled="
                     busyProductId !== null ||
                     !selectedFiles[product.id] ||
-                    (imagesByProduct[product.id]?.length ?? 0) >= 5
+                    (
+                      imagesByProduct[product.id]
+                        ?.length ?? 0
+                    ) >= 5
                   "
                   @click="handleUpload(product)"
                 >
@@ -489,10 +646,22 @@ onUnmounted(() => {
             </template>
 
             <p
-              v-else
+              v-else-if="
+                product.status === 'PUBLISHED'
+              "
               class="hint published-hint"
             >
               商品已发布，当前版本暂不支持修改图片。
+            </p>
+
+            <p
+              v-else-if="
+                product.status === 'OFF_SHELF'
+              "
+              class="hint published-hint"
+            >
+              下架商品的图片已保留，
+              当前不支持修改。
             </p>
 
             <p
@@ -501,10 +670,13 @@ onUnmounted(() => {
               role="alert"
             >
               {{ imageErrors[product.id] }}
+
               <button
                 type="button"
                 class="retry-link"
-                @click="loadProductImages(product.id)"
+                @click="
+                  loadProductImages(product.id)
+                "
               >
                 重试加载
               </button>
@@ -533,8 +705,8 @@ onUnmounted(() => {
 .header {
   height: 82px;
   display: flex;
-  justify-content: space-between;
   align-items: center;
+  justify-content: space-between;
   border-bottom: 1px solid #e5eaf3;
 }
 
@@ -547,14 +719,14 @@ onUnmounted(() => {
 
 .back-link {
   color: #64748b;
-  text-decoration: none;
   font-size: 14px;
+  text-decoration: none;
 }
 
 .intro {
   display: flex;
-  justify-content: space-between;
   align-items: center;
+  justify-content: space-between;
   gap: 20px;
   padding: 50px 0 32px;
 }
@@ -591,9 +763,36 @@ onUnmounted(() => {
   white-space: nowrap;
 }
 
+.secondary-link {
+  display: inline-block;
+  padding: 10px 17px;
+  border: 1px solid #cdd8fa;
+  border-radius: 9px;
+  background: white;
+  color: #4169e1;
+  font-size: 14px;
+  text-decoration: none;
+}
+
+.danger-button {
+  padding: 11px 18px;
+  border: 1px solid #fecaca;
+  border-radius: 9px;
+  background: #fef2f2;
+  color: #b91c1c;
+  font-size: 14px;
+  cursor: pointer;
+}
+
 button:disabled {
   opacity: 0.55;
   cursor: not-allowed;
+}
+
+.heading-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
 }
 
 .product-list {
@@ -611,8 +810,8 @@ button:disabled {
 
 .product-heading {
   display: flex;
-  justify-content: space-between;
   align-items: center;
+  justify-content: space-between;
   gap: 20px;
 }
 
@@ -644,6 +843,16 @@ button:disabled {
 .status.published {
   background: #ecfdf3;
   color: #16803c;
+}
+
+.status.offShelf {
+  background: #fff7ed;
+  color: #9a3412;
+}
+
+.off-shelf-note {
+  color: #9a3412;
+  font-size: 13px;
 }
 
 .product-summary p {
@@ -702,8 +911,8 @@ button:disabled {
 
 .delete-image {
   position: absolute;
-  bottom: 8px;
   right: 8px;
+  bottom: 8px;
   padding: 6px 10px;
   border: 0;
   border-radius: 6px;

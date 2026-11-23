@@ -39,7 +39,6 @@ public class ProductService {
         return product;
     }
 
-    // 保留原有内部查询能力。
     public Product getProductById(Long id) {
         Product product = productMapper.findById(id);
 
@@ -56,6 +55,23 @@ public class ProductService {
 
     public List<Product> listMyProducts(Long sellerId) {
         return productMapper.findBySellerId(sellerId);
+    }
+
+    public Product getOwnedDraftById(
+            Long id,
+            Long sellerId
+    ) {
+        Product product = productMapper.findById(id);
+
+        requireOwner(product, id, sellerId);
+
+        if (!"DRAFT".equals(product.getStatus())) {
+            throw new ProductStatusException(
+                    "只有草稿状态的商品允许编辑"
+            );
+        }
+
+        return product;
     }
 
     @Transactional
@@ -139,6 +155,34 @@ public class ProductService {
         }
 
         int rows = productMapper.publishOwnedDraft(
+                id,
+                sellerId,
+                product.getVersion()
+        );
+
+        if (rows != 1) {
+            throw new ProductConflictException(
+                    "商品状态已发生变化，请刷新后重试"
+            );
+        }
+    }
+
+    @Transactional
+    public void offShelfProduct(
+            Long id,
+            Long sellerId
+    ) {
+        Product product = productMapper.findById(id);
+
+        requireOwner(product, id, sellerId);
+
+        if (!"PUBLISHED".equals(product.getStatus())) {
+            throw new ProductStatusException(
+                    "只有已发布的商品允许下架"
+            );
+        }
+
+        int rows = productMapper.offShelfOwnedPublished(
                 id,
                 sellerId,
                 product.getVersion()

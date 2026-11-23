@@ -37,7 +37,6 @@ public class ProductController {
         );
     }
 
-    // 必须放在 /{id} 路由之前便于代码阅读。
     @GetMapping("/mine")
     public ApiResponse<List<Product>> listMyProducts(
             Authentication authentication
@@ -47,6 +46,19 @@ public class ProductController {
 
         return ApiResponse.success(
                 productService.listMyProducts(sellerId)
+        );
+    }
+
+    @GetMapping("/mine/{id}")
+    public ApiResponse<Product> getMyDraft(
+            @PathVariable Long id,
+            Authentication authentication
+    ) {
+        Long sellerId = currentUserIdResolver
+                .requireCurrentUserId(authentication);
+
+        return ApiResponse.success(
+                productService.getOwnedDraftById(id, sellerId)
         );
     }
 
@@ -102,6 +114,19 @@ public class ProductController {
                 .requireCurrentUserId(authentication);
 
         productService.publishProduct(id, sellerId);
+
+        return ApiResponse.success(null);
+    }
+
+    @PostMapping("/{id}/off-shelf")
+    public ApiResponse<Void> offShelfProduct(
+            @PathVariable Long id,
+            Authentication authentication
+    ) {
+        Long sellerId = currentUserIdResolver
+                .requireCurrentUserId(authentication);
+
+        productService.offShelfProduct(id, sellerId);
 
         return ApiResponse.success(null);
     }
