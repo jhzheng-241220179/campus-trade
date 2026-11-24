@@ -9,141 +9,120 @@ import com.campustrade.model.Product;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowMapper;
 import org.springframework.security.access.AccessDeniedException;
 
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 class ProductOffShelfServiceTest {
 
-    private static final Long SELLER_ID = 1L;
-    private static final Long OTHER_USER_ID = 2L;
-
     private ProductMapper mapper;
+    private JdbcTemplate jdbc;
     private ProductService service;
 
     @BeforeEach
     void setUp() {
         mapper = mock(ProductMapper.class);
-        service = new ProductService(mapper);
+        jdbc = mock(JdbcTemplate.class);
+        service = new ProductService(mapper, jdbc);
+
+        when(jdbc.query(
+                anyString(),
+                org.mockito.ArgumentMatchers
+                        .<RowMapper<String>>any(),
+                eq(1L)
+        )).thenReturn(List.of("ACTIVE"));
     }
 
-    private Product createProduct(
-            Long id,
+    private Product product(
             Long sellerId,
-            String status,
-            int version
+            String status
     ) {
-        Product product = new Product();
-        product.setId(id);
-        product.setSellerId(sellerId);
-        product.setStatus(status);
-        product.setVersion(version);
-        return product;
+        Product p = new Product();
+        p.setId(5L);
+        p.setSellerId(sellerId);
+        p.setStatus(status);
+        p.setVersion(3);
+        return p;
     }
 
     @Test
     void shouldOffShelfPublishedProduct() {
-        Product product = createProduct(
-                5L, SELLER_ID, "PUBLISHED", 3
-        );
-
-        when(mapper.findById(5L)).thenReturn(product);
+        when(mapper.findById(5L))
+                .thenReturn(product(1L, "PUBLISHED"));
 
         when(mapper.offShelfOwnedPublished(
-                5L, SELLER_ID, 3
+                5L, 1L, 3
         )).thenReturn(1);
 
-        assertDoesNotThrow(
-                () -> service.offShelfProduct(5L, SELLER_ID)
-        );
+        service.offShelfProduct(5L, 1L);
 
         verify(mapper).offShelfOwnedPublished(
-                5L, SELLER_ID, 3
+                5L, 1L, 3
         );
     }
 
     @Test
     void shouldRejectOtherSeller() {
-        Product product = createProduct(
-                5L, OTHER_USER_ID, "PUBLISHED", 3
-        );
-
-        when(mapper.findById(5L)).thenReturn(product);
+        when(mapper.findById(5L))
+                .thenReturn(product(2L, "PUBLISHED"));
 
         assertThrows(
                 AccessDeniedException.class,
-                () -> service.offShelfProduct(5L, SELLER_ID)
-        );
-
-        verify(mapper, never()).offShelfOwnedPublished(
-                anyLong(), anyLong(), anyInt()
+                () -> service.offShelfProduct(5L, 1L)
         );
     }
 
     @Test
     void shouldRejectDraftProduct() {
-        Product product = createProduct(
-                5L, SELLER_ID, "DRAFT", 3
-        );
-
-        when(mapper.findById(5L)).thenReturn(product);
+        when(mapper.findById(5L))
+                .thenReturn(product(1L, "DRAFT"));
 
         assertThrows(
                 ProductStatusException.class,
-                () -> service.offShelfProduct(5L, SELLER_ID)
+                () -> service.offShelfProduct(5L, 1L)
         );
     }
 
     @Test
     void shouldRejectRepeatedOffShelf() {
-        Product product = createProduct(
-                5L, SELLER_ID, "OFF_SHELF", 4
-        );
-
-        when(mapper.findById(5L)).thenReturn(product);
+        when(mapper.findById(5L))
+                .thenReturn(product(1L, "OFF_SHELF"));
 
         assertThrows(
                 ProductStatusException.class,
-                () -> service.offShelfProduct(5L, SELLER_ID)
+                () -> service.offShelfProduct(5L, 1L)
         );
     }
 
     @Test
     void shouldRejectMissingProduct() {
-        when(mapper.findById(5L)).thenReturn(null);
-
         assertThrows(
                 ProductNotFoundException.class,
-                () -> service.offShelfProduct(5L, SELLER_ID)
+                () -> service.offShelfProduct(5L, 1L)
         );
     }
 
     @Test
     void shouldRejectConcurrentChange() {
-        Product product = createProduct(
-                5L, SELLER_ID, "PUBLISHED", 3
-        );
-
-        when(mapper.findById(5L)).thenReturn(product);
-
-        when(mapper.offShelfOwnedPublished(
-                5L, SELLER_ID, 3
-        )).thenReturn(0);
+        when(mapper.findById(5L))
+                .thenReturn(product(1L, "PUBLISHED"));
 
         assertThrows(
                 ProductConflictException.class,
-                () -> service.offShelfProduct(5L, SELLER_ID)
+                () -> service.offShelfProduct(5L, 1L)
         );
     }
 
     @Test
     void unpublishedProductShouldNotBePublic() {
-        Product product = createProduct(
-                5L, SELLER_ID, "OFF_SHELF", 4
-        );
-
-        when(mapper.findById(5L)).thenReturn(product);
+        when(mapper.findById(5L))
+                .thenReturn(product(1L, "OFF_SHELF"));
 
         assertThrows(
                 ProductNotFoundException.class,

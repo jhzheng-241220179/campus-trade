@@ -2,7 +2,9 @@
 package com.campustrade.config;
 
 import com.campustrade.controller.AuthController;
+import com.campustrade.service.CurrentUserService;
 import com.campustrade.service.EmailVerificationFacade;
+import com.campustrade.service.UserService;
 import com.campustrade.service.VerificationCodeService;
 
 import org.junit.jupiter.api.Test;
@@ -10,6 +12,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -27,12 +31,27 @@ class SecurityConfigTest {
     @MockitoBean
     private EmailVerificationFacade facade;
 
+    @MockitoBean
+    private CurrentUserService currentUserService;
+
+    @MockitoBean
+    private UserService userService;
+
+    @MockitoBean
+    private UserDetailsService userDetailsService;
+
+    @MockitoBean
+    private JdbcTemplate jdbcTemplate;
+
     @Test
     void anonymousCanSendCodeWithoutCsrf() throws Exception {
-        mockMvc.perform(post("/api/auth/email/send-code")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("{\"email\":\"student@example.com\"}"))
-            .andExpect(status().isOk());
+        mockMvc.perform(
+                post("/api/auth/email/send-code")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(
+                                "{\"email\":\"student@example.com\"}"
+                        )
+        ).andExpect(status().isOk());
 
         verify(facade).sendCode("student@example.com");
     }
@@ -40,31 +59,36 @@ class SecurityConfigTest {
     @Test
     void anonymousCanVerifyEmailWithoutCsrf() throws Exception {
         when(facade.verifyEmail(
-                "student@example.com", "123456"))
-            .thenReturn(VerificationCodeService.VerifyResult.SUCCESS);
+                "student@example.com",
+                "123456"
+        )).thenReturn(
+                VerificationCodeService.VerifyResult.SUCCESS
+        );
 
-        mockMvc.perform(post("/api/auth/email/verify")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("""
-                    {
-                      "email": "student@example.com",
-                      "code": "123456"
-                    }
-                    """))
-            .andExpect(status().isOk());
+        mockMvc.perform(
+                post("/api/auth/email/verify")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "email": "student@example.com",
+                                  "code": "123456"
+                                }
+                                """)
+        ).andExpect(status().isOk());
     }
 
     @Test
     void anonymousCannotAccessMe() throws Exception {
         mockMvc.perform(get("/api/auth/me"))
-            .andExpect(status().isUnauthorized());
+                .andExpect(status().isUnauthorized());
     }
 
     @Test
     void otherPostRequestsStillRequireCsrf() throws Exception {
-        mockMvc.perform(post("/api/products")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("{}"))
-            .andExpect(status().isForbidden());
+        mockMvc.perform(
+                post("/api/products")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}")
+        ).andExpect(status().isForbidden());
     }
 }

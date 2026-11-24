@@ -10,9 +10,12 @@ import com.campustrade.model.Product;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowMapper;
 import org.springframework.security.access.AccessDeniedException;
 
 import java.math.BigDecimal;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -20,35 +23,41 @@ import static org.mockito.Mockito.*;
 
 class ProductServiceTest {
 
-    private ProductMapper productMapper;
-    private ProductService productService;
-
-    private static final Long SELLER_ID = 1L;
-    private static final Long OTHER_USER_ID = 2L;
+    private ProductMapper mapper;
+    private JdbcTemplate jdbc;
+    private ProductService service;
 
     @BeforeEach
     void setUp() {
-        productMapper = mock(ProductMapper.class);
-        productService = new ProductService(productMapper);
+        mapper = mock(ProductMapper.class);
+        jdbc = mock(JdbcTemplate.class);
+        service = new ProductService(mapper, jdbc);
+
+        when(jdbc.query(
+                anyString(),
+                org.mockito.ArgumentMatchers
+                        .<RowMapper<String>>any(),
+                eq(1L)
+        )).thenReturn(List.of("ACTIVE"));
     }
 
-    private Product createProduct(
-            Long id,
-            Long sellerId,
+    private Product product(
+            long id,
+            long sellerId,
             String status,
             int version
     ) {
-        Product product = new Product();
-        product.setId(id);
-        product.setSellerId(sellerId);
-        product.setTitle("旧标题");
-        product.setPrice(new BigDecimal("25.00"));
-        product.setStatus(status);
-        product.setVersion(version);
-        return product;
+        Product p = new Product();
+        p.setId(id);
+        p.setSellerId(sellerId);
+        p.setTitle("旧标题");
+        p.setPrice(new BigDecimal("25.00"));
+        p.setStatus(status);
+        p.setVersion(version);
+        return p;
     }
 
-    private ProductUpdateRequest createUpdateRequest(int version) {
+    private ProductUpdateRequest update(int version) {
         return new ProductUpdateRequest(
                 "二手计算机网络教材",
                 new BigDecimal("18.00"),
@@ -60,230 +69,142 @@ class ProductServiceTest {
         );
     }
 
-    // ---------- 商品编辑测试 ----------
-
     @Test
-    void updateProduct_shouldThrowWhenNotFound() {
-        Long id = 999L;
-
-        when(productMapper.findById(id)).thenReturn(null);
-
+    void updateRejectsMissingProduct() {
         assertThrows(
                 ProductNotFoundException.class,
-                () -> productService.updateProduct(
-                        id,
-                        createUpdateRequest(0),
-                        SELLER_ID
+                () -> service.updateProduct(
+                        999L, update(0), 1L
                 )
         );
-
-        verify(productMapper, never())
-                .updateOwnedDraft(any(), anyLong());
     }
 
     @Test
-    void updateProduct_shouldThrowWhenStatusIsPublished() {
-        Long id = 2L;
-
-        Product product = createProduct(
-                id, SELLER_ID, "PUBLISHED", 0
-        );
-
-        when(productMapper.findById(id)).thenReturn(product);
+    void updateRejectsPublishedProduct() {
+        when(mapper.findById(2L))
+                .thenReturn(product(2, 1, "PUBLISHED", 0));
 
         assertThrows(
                 ProductStatusException.class,
-                () -> productService.updateProduct(
-                        id,
-                        createUpdateRequest(0),
-                        SELLER_ID
+                () -> service.updateProduct(
+                        2L, update(0), 1L
                 )
         );
-
-        verify(productMapper, never())
-                .updateOwnedDraft(any(), anyLong());
     }
 
     @Test
-    void updateProduct_shouldThrowWhenVersionIsOutdated() {
-        Long id = 1L;
-
-        Product product = createProduct(
-                id, SELLER_ID, "DRAFT", 3
-        );
-
-        when(productMapper.findById(id)).thenReturn(product);
+    void updateRejectsOutdatedVersion() {
+        when(mapper.findById(1L))
+                .thenReturn(product(1, 1, "DRAFT", 3));
 
         assertThrows(
                 ProductConflictException.class,
-                () -> productService.updateProduct(
-                        id,
-                        createUpdateRequest(2),
-                        SELLER_ID
+                () -> service.updateProduct(
+                        1L, update(2), 1L
                 )
         );
-
-        verify(productMapper, never())
-                .updateOwnedDraft(any(), anyLong());
     }
 
     @Test
-    void updateProduct_shouldThrowWhenNotOwner() {
-        Long id = 1L;
-
-        Product product = createProduct(
-                id, OTHER_USER_ID, "DRAFT", 0
-        );
-
-        when(productMapper.findById(id)).thenReturn(product);
+    void updateRejectsOtherOwner() {
+        when(mapper.findById(1L))
+                .thenReturn(product(1, 2, "DRAFT", 0));
 
         assertThrows(
                 AccessDeniedException.class,
-                () -> productService.updateProduct(
-                        id,
-                        createUpdateRequest(0),
-                        SELLER_ID
+                () -> service.updateProduct(
+                        1L, update(0), 1L
                 )
         );
-
-        verify(productMapper, never())
-                .updateOwnedDraft(any(), anyLong());
     }
 
     @Test
-    void updateProduct_shouldSucceedWhenValid() {
-        Long id = 1L;
+    void updateSucceeds() {
+        when(mapper.findById(1L))
+                .thenReturn(product(1, 1, "DRAFT", 2));
 
-        Product product = createProduct(
-                id, SELLER_ID, "DRAFT", 2
-        );
-
-        when(productMapper.findById(id)).thenReturn(product);
-
-        when(productMapper.updateOwnedDraft(
-                any(Product.class),
-                eq(SELLER_ID)
+        when(mapper.updateOwnedDraft(
+                any(Product.class), eq(1L)
         )).thenReturn(1);
 
-        assertDoesNotThrow(
-                () -> productService.updateProduct(
-                        id,
-                        createUpdateRequest(2),
-                        SELLER_ID
-                )
-        );
+        service.updateProduct(1L, update(2), 1L);
 
-        verify(productMapper, times(1))
-                .updateOwnedDraft(
-                        argThat(p ->
-                                p.getId().equals(id)
-                                && p.getTitle().equals(
-                                        "二手计算机网络教材"
-                                )
-                                && p.getPrice().compareTo(
-                                        new BigDecimal("18.00")
-                                ) == 0
-                                && p.getVersion().equals(2)
-                        ),
-                        eq(SELLER_ID)
-                );
+        verify(mapper).updateOwnedDraft(
+                argThat(p ->
+                        "二手计算机网络教材".equals(p.getTitle())
+                        && p.getPrice().compareTo(
+                                new BigDecimal("18.00")
+                        ) == 0
+                        && p.getVersion().equals(2)
+                ),
+                eq(1L)
+        );
     }
 
     @Test
-    void updateProduct_shouldThrowWhenConcurrentUpdate() {
-        Long id = 1L;
-
-        Product product = createProduct(
-                id, SELLER_ID, "DRAFT", 2
-        );
-
-        when(productMapper.findById(id)).thenReturn(product);
-
-        when(productMapper.updateOwnedDraft(
-                any(Product.class),
-                eq(SELLER_ID)
-        )).thenReturn(0);
+    void updateRejectsConcurrentChange() {
+        when(mapper.findById(1L))
+                .thenReturn(product(1, 1, "DRAFT", 2));
 
         assertThrows(
                 ProductConflictException.class,
-                () -> productService.updateProduct(
-                        id,
-                        createUpdateRequest(2),
-                        SELLER_ID
+                () -> service.updateProduct(
+                        1L, update(2), 1L
                 )
         );
     }
 
-    // ---------- 商品发布测试 ----------
-
     @Test
-    void publishProduct_shouldSucceedWhenValid() {
-        Long id = 1L;
+    void publishSucceeds() {
+        when(mapper.findById(1L))
+                .thenReturn(product(1, 1, "DRAFT", 2));
 
-        Product product = createProduct(
-                id, SELLER_ID, "DRAFT", 2
-        );
+        when(mapper.publishOwnedDraft(1L, 1L, 2))
+                .thenReturn(1);
 
-        when(productMapper.findById(id)).thenReturn(product);
+        service.publishProduct(1L, 1L);
 
-        when(productMapper.publishOwnedDraft(
-                id, SELLER_ID, 2
-        )).thenReturn(1);
-
-        assertDoesNotThrow(
-                () -> productService.publishProduct(
-                        id, SELLER_ID
-                )
-        );
-
-        verify(productMapper).publishOwnedDraft(
-                id, SELLER_ID, 2
-        );
+        verify(mapper).publishOwnedDraft(1L, 1L, 2);
     }
 
     @Test
-    void publishProduct_shouldThrowWhenNotOwner() {
-        Long id = 1L;
-
-        Product product = createProduct(
-                id, OTHER_USER_ID, "DRAFT", 0
-        );
-
-        when(productMapper.findById(id)).thenReturn(product);
+    void publishRejectsOtherOwner() {
+        when(mapper.findById(1L))
+                .thenReturn(product(1, 2, "DRAFT", 0));
 
         assertThrows(
                 AccessDeniedException.class,
-                () -> productService.publishProduct(
-                        id, SELLER_ID
-                )
+                () -> service.publishProduct(1L, 1L)
         );
-
-        verify(productMapper, never())
-                .publishOwnedDraft(
-                        anyLong(), anyLong(), anyInt()
-                );
     }
 
     @Test
-    void publishProduct_shouldThrowWhenAlreadyPublished() {
-        Long id = 1L;
-
-        Product product = createProduct(
-                id, SELLER_ID, "PUBLISHED", 1
-        );
-
-        when(productMapper.findById(id)).thenReturn(product);
+    void publishRejectsAlreadyPublished() {
+        when(mapper.findById(1L))
+                .thenReturn(product(1, 1, "PUBLISHED", 1));
 
         assertThrows(
                 ProductStatusException.class,
-                () -> productService.publishProduct(
-                        id, SELLER_ID
-                )
+                () -> service.publishProduct(1L, 1L)
+        );
+    }
+
+    @Test
+    void bannedSellerCannotPublish() {
+        when(jdbc.query(
+                anyString(),
+                org.mockito.ArgumentMatchers
+                        .<RowMapper<String>>any(),
+                eq(1L)
+        )).thenReturn(List.of("BANNED"));
+
+        assertThrows(
+                AccessDeniedException.class,
+                () -> service.publishProduct(1L, 1L)
         );
 
-        verify(productMapper, never())
-                .publishOwnedDraft(
-                        anyLong(), anyLong(), anyInt()
-                );
+        verify(mapper, never()).publishOwnedDraft(
+                anyLong(), anyLong(), anyInt()
+        );
     }
 }

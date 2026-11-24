@@ -1,3 +1,4 @@
+
 package com.campustrade.service;
 
 import com.campustrade.exception.ProductNotFoundException;
@@ -7,6 +8,7 @@ import com.campustrade.model.Product;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.access.AccessDeniedException;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -14,13 +16,16 @@ import static org.mockito.Mockito.*;
 
 class OwnedDraftServiceTest {
 
-    private ProductMapper productMapper;
-    private ProductService productService;
+    private ProductMapper mapper;
+    private ProductService service;
 
     @BeforeEach
     void setUp() {
-        productMapper = mock(ProductMapper.class);
-        productService = new ProductService(productMapper);
+        mapper = mock(ProductMapper.class);
+        service = new ProductService(
+                mapper,
+                mock(JdbcTemplate.class)
+        );
     }
 
     private Product product(
@@ -28,53 +33,51 @@ class OwnedDraftServiceTest {
             Long sellerId,
             String status
     ) {
-        Product product = new Product();
-        product.setId(id);
-        product.setSellerId(sellerId);
-        product.setStatus(status);
-        return product;
+        Product p = new Product();
+        p.setId(id);
+        p.setSellerId(sellerId);
+        p.setStatus(status);
+        return p;
     }
 
     @Test
     void shouldReturnOwnedDraft() {
         Product draft = product(8L, 1L, "DRAFT");
-        when(productMapper.findById(8L)).thenReturn(draft);
+        when(mapper.findById(8L)).thenReturn(draft);
 
-        Product result =
-                productService.getOwnedDraftById(8L, 1L);
-
-        assertSame(draft, result);
+        assertSame(
+                draft,
+                service.getOwnedDraftById(8L, 1L)
+        );
     }
 
     @Test
     void shouldRejectOtherUsersDraft() {
-        Product draft = product(8L, 2L, "DRAFT");
-        when(productMapper.findById(8L)).thenReturn(draft);
+        when(mapper.findById(8L))
+                .thenReturn(product(8L, 2L, "DRAFT"));
 
         assertThrows(
                 AccessDeniedException.class,
-                () -> productService.getOwnedDraftById(8L, 1L)
+                () -> service.getOwnedDraftById(8L, 1L)
         );
     }
 
     @Test
     void shouldRejectPublishedProduct() {
-        Product published = product(8L, 1L, "PUBLISHED");
-        when(productMapper.findById(8L)).thenReturn(published);
+        when(mapper.findById(8L))
+                .thenReturn(product(8L, 1L, "PUBLISHED"));
 
         assertThrows(
                 ProductStatusException.class,
-                () -> productService.getOwnedDraftById(8L, 1L)
+                () -> service.getOwnedDraftById(8L, 1L)
         );
     }
 
     @Test
     void shouldRejectMissingProduct() {
-        when(productMapper.findById(8L)).thenReturn(null);
-
         assertThrows(
                 ProductNotFoundException.class,
-                () -> productService.getOwnedDraftById(8L, 1L)
+                () -> service.getOwnedDraftById(8L, 1L)
         );
     }
 }

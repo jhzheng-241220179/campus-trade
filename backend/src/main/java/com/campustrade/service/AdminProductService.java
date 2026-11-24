@@ -1,0 +1,115 @@
+
+package com.campustrade.service;
+
+import com.campustrade.dto.AdminProductResponse;
+import com.campustrade.exception.ProductConflictException;
+import com.campustrade.exception.ProductNotFoundException;
+import com.campustrade.exception.ProductStatusException;
+import com.campustrade.mapper.ProductMapper;
+import com.campustrade.model.Product;
+
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.List;
+
+@Service
+public class AdminProductService {
+
+    private final ProductMapper productMapper;
+    private final JdbcTemplate jdbcTemplate;
+
+    public AdminProductService(
+            ProductMapper productMapper,
+            JdbcTemplate jdbcTemplate
+    ) {
+        this.productMapper = productMapper;
+        this.jdbcTemplate = jdbcTemplate;
+    }
+
+    @Transactional(readOnly = true)
+    public List<AdminProductResponse> listProducts() {
+        return productMapper.findAll()
+                .stream()
+                .map(AdminProductResponse::from)
+                .toList();
+    }
+
+    @Transactional
+    public void forceOffShelf(Long productId) {
+        if (productId == null || productId <= 0) {
+            throw new ProductConflictException(
+                    "商品编号无效"
+            );
+        }
+
+        // 先读取商品对应的卖家 ID。
+        Product snapshot = productMapper.findById(productId);
+
+        if (snapshot == null) {
+            throw new ProductNotFoundException(productId);
+        }
+
+        Long sellerId = snapshot.getSellerId();
+
+        // 和封禁、商品发布使用相同的用户行锁。
+        List<Long> lockedUsers = jdbcTemplate.query(
+                """
+                SELECT id
+                FROM users
+                WHERE id = ?
+                FOR UPDATE
+                """,
+                (rs, rowNum) -> rs.getLong("id"),
+                sellerId
+        );
+
+        if (lockedUsers.size() != 1) {
+            throw new ProductConflictException(
+                    "商品所属用户不存在"
+            );
+        }
+
+        // 取得用户锁后再次读取商品，避免使用过期状态。
+        Product product =
+                productMapper.findByIdForUpdate(productId);
+
+        if (product == null) {
+            throw new ProductNotFoundException(productId);
+        }
+
+        if (!sellerId.equals(product.getSellerId())) {
+            throw new ProductConflictException(
+                    "商品所属用户已发生变化"
+            );
+        }
+
+        if (!"PUBLISHED".equals(product.getStatus())) {
+            throw new ProductStatusException(
+                    "只有已发布商品可以被强制下架"
+            );
+        }
+
+        int rows = jdbcTemplate.update(
+                """
+                UPDATE products
+                SET status = 'OFF_SHELF',
+                    version = version + 1
+                WHERE id = ?
+                  AND seller_id = ?
+                  AND status = 'PUBLISHED'
+                  AND version = ?
+                """,
+                productId,
+                sellerId,
+                product.getVersion()
+        );
+
+        if (rows != 1) {
+            throw new ProductConflictException(
+                    "商品状态已发生变化，请刷新后重试"
+            );
+        }
+    }
+}

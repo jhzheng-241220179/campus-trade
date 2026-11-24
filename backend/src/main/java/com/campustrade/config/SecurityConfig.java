@@ -1,9 +1,12 @@
 
 package com.campustrade.config;
 
+import com.campustrade.security.AccountStatusFilter;
+
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.ProviderManager;
 import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
@@ -13,6 +16,7 @@ import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.access.intercept.AuthorizationFilter;
 
 @Configuration
 @EnableWebSecurity
@@ -38,7 +42,8 @@ public class SecurityConfig {
 
     @Bean
     public SecurityFilterChain securityFilterChain(
-            HttpSecurity http
+            HttpSecurity http,
+            JdbcTemplate jdbcTemplate
     ) throws Exception {
 
         http
@@ -57,16 +62,22 @@ public class SecurityConfig {
                                 HttpMethod.GET,
                                 "/api/auth/csrf"
                         ).permitAll()
+
                         .requestMatchers(
                                 HttpMethod.POST,
                                 "/api/auth/login",
                                 "/api/auth/register"
                         ).permitAll()
+
                         .requestMatchers(
                                 HttpMethod.POST,
                                 "/api/auth/email/send-code",
                                 "/api/auth/email/verify"
                         ).permitAll()
+
+                        .requestMatchers("/api/admin/**")
+                        .hasRole("ADMIN")
+
                         .requestMatchers(
                                 HttpMethod.GET,
                                 "/api/products",
@@ -74,6 +85,7 @@ public class SecurityConfig {
                                 "/api/products/{productId}/images",
                                 "/api/products/{productId}/images/{imageId}"
                         ).permitAll()
+
                         .anyRequest()
                         .authenticated()
                 )
@@ -101,10 +113,20 @@ public class SecurityConfig {
                 .formLogin(form -> form.disable())
                 .exceptionHandling(ex -> ex
                         .authenticationEntryPoint(
-                                (request, response, authException) -> {
-                                    response.sendError(401);
-                                }
+                                (request, response, authException) ->
+                                        response.sendError(401)
                         )
+                        .accessDeniedHandler(
+                                (request, response, exception) ->
+                                        response.sendError(403)
+                        )
+                )
+
+                // 先读取 Session 身份，再检查数据库中的账户状态；
+                // 在最终权限判断前阻止失效的 Session。
+                .addFilterBefore(
+                        new AccountStatusFilter(jdbcTemplate),
+                        AuthorizationFilter.class
                 );
 
         return http.build();

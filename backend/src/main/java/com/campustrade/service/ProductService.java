@@ -9,6 +9,7 @@ import com.campustrade.exception.ProductStatusException;
 import com.campustrade.mapper.ProductMapper;
 import com.campustrade.model.Product;
 
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -19,9 +20,14 @@ import java.util.List;
 public class ProductService {
 
     private final ProductMapper productMapper;
+    private final JdbcTemplate jdbcTemplate;
 
-    public ProductService(ProductMapper productMapper) {
+    public ProductService(
+            ProductMapper productMapper,
+            JdbcTemplate jdbcTemplate
+    ) {
         this.productMapper = productMapper;
+        this.jdbcTemplate = jdbcTemplate;
     }
 
     public List<Product> listPublishedProducts() {
@@ -74,13 +80,34 @@ public class ProductService {
         return product;
     }
 
+    private void lockAndCheckSeller(Long sellerId) {
+        List<String> statuses = jdbcTemplate.query(
+                """
+                SELECT status
+                FROM users
+                WHERE id = ?
+                FOR UPDATE
+                """,
+                (rs, rowNum) -> rs.getString("status"),
+                sellerId
+        );
+
+        if (statuses.size() != 1
+                || !"ACTIVE".equals(statuses.get(0))) {
+            throw new AccessDeniedException(
+                    "当前账户无法进行商品操作"
+            );
+        }
+    }
+
     @Transactional
     public Long createProduct(
             ProductCreateRequest request,
             Long sellerId
     ) {
-        Product product = new Product();
+        lockAndCheckSeller(sellerId);
 
+        Product product = new Product();
         product.setSellerId(sellerId);
         product.setTitle(request.title());
         product.setPrice(request.price());
@@ -104,8 +131,9 @@ public class ProductService {
             ProductUpdateRequest request,
             Long sellerId
     ) {
-        Product product = productMapper.findById(id);
+        lockAndCheckSeller(sellerId);
 
+        Product product = productMapper.findById(id);
         requireOwner(product, id, sellerId);
 
         if (!"DRAFT".equals(product.getStatus())) {
@@ -144,8 +172,9 @@ public class ProductService {
             Long id,
             Long sellerId
     ) {
-        Product product = productMapper.findById(id);
+        lockAndCheckSeller(sellerId);
 
+        Product product = productMapper.findById(id);
         requireOwner(product, id, sellerId);
 
         if (!"DRAFT".equals(product.getStatus())) {
@@ -172,8 +201,9 @@ public class ProductService {
             Long id,
             Long sellerId
     ) {
-        Product product = productMapper.findById(id);
+        lockAndCheckSeller(sellerId);
 
+        Product product = productMapper.findById(id);
         requireOwner(product, id, sellerId);
 
         if (!"PUBLISHED".equals(product.getStatus())) {

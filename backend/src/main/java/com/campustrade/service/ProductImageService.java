@@ -14,6 +14,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Service;
@@ -43,21 +44,47 @@ public class ProductImageService {
     private final ProductMapper productMapper;
     private final ProductImageMapper imageMapper;
     private final CurrentUserIdResolver userIdResolver;
+    private final JdbcTemplate jdbcTemplate;
     private final Path storageRoot;
 
     public ProductImageService(
             ProductMapper productMapper,
             ProductImageMapper imageMapper,
             CurrentUserIdResolver userIdResolver,
+            JdbcTemplate jdbcTemplate,
             @Value("${campustrade.images.directory:./uploads/products}")
             String storageDirectory
     ) {
         this.productMapper = productMapper;
         this.imageMapper = imageMapper;
         this.userIdResolver = userIdResolver;
+        this.jdbcTemplate = jdbcTemplate;
         this.storageRoot = Path.of(storageDirectory)
                 .toAbsolutePath()
                 .normalize();
+    }
+
+    // 统一加锁顺序：
+    // users 行 -> products 行 -> product_images 记录。
+    // 调用者必须处于事务中。
+    private void lockAndCheckSeller(Long sellerId) {
+        List<String> statuses = jdbcTemplate.query(
+                """
+                SELECT status
+                FROM users
+                WHERE id = ?
+                FOR UPDATE
+                """,
+                (rs, rowNum) -> rs.getString("status"),
+                sellerId
+        );
+
+        if (statuses.size() != 1
+                || !"ACTIVE".equals(statuses.get(0))) {
+            throw new AccessDeniedException(
+                    "当前账户无法修改商品图片"
+            );
+        }
     }
 
     @Transactional
@@ -70,8 +97,11 @@ public class ProductImageService {
                 authentication
         );
 
-        // 同一商品的上传、删除通过商品行锁串行化。
-        Product product = productMapper.findByIdForUpdate(productId);
+        lockAndCheckSeller(sellerId);
+
+        Product product =
+                productMapper.findByIdForUpdate(productId);
+
         requireEditableOwner(product, productId, sellerId);
 
         byte[] bytes = readAndValidateFile(file);
@@ -116,7 +146,7 @@ public class ProductImageService {
             );
         }
 
-        // 如果数据库事务最终回滚，也需要删除刚写入的文件。
+        // 数据库事务回滚时清理新增文件。
         TransactionSynchronizationManager
                 .registerSynchronization(
                         new TransactionSynchronization() {
@@ -220,6 +250,8 @@ public class ProductImageService {
                 authentication
         );
 
+        lockAndCheckSeller(sellerId);
+
         Product product =
                 productMapper.findByIdForUpdate(productId);
 
@@ -251,7 +283,7 @@ public class ProductImageService {
 
         Path filePath = pathFor(image);
 
-        // 数据库提交成功后再删除文件。
+        // 数据库提交成功后再删除磁盘文件。
         TransactionSynchronizationManager
                 .registerSynchronization(
                         new TransactionSynchronization() {
@@ -299,7 +331,7 @@ public class ProductImageService {
             return;
         }
 
-        // 草稿图片仅允许所属卖家预览。
+        // 非公开商品的图片仅允许卖家本人读取。
         if (authentication == null
                 || !authentication.isAuthenticated()) {
             throw new ProductNotFoundException(productId);

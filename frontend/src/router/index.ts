@@ -1,3 +1,4 @@
+
 import {
   createRouter,
   createWebHistory,
@@ -15,6 +16,7 @@ import ProductDetailView from '../views/ProductDetailView.vue'
 import ProductPublishView from '../views/ProductPublishView.vue'
 import MyProductsView from '../views/MyProductsView.vue'
 import ProductEditView from '../views/ProductEditView.vue'
+import AdminDashboardView from '../views/AdminDashboardView.vue'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -79,6 +81,15 @@ const router = createRouter({
       name: 'product-detail',
       component: ProductDetailView,
     },
+    {
+      path: '/admin',
+      name: 'admin-dashboard',
+      component: AdminDashboardView,
+      meta: {
+        requiresAuth: true,
+        requiresAdmin: true,
+      },
+    },
   ],
 })
 
@@ -93,7 +104,7 @@ router.beforeEach(async (to) => {
     try {
       await authStore.fetchCurrentUser()
     } catch {
-      // Session 失效时交给下方登录状态判断
+      // 身份状态查询失败时，由后续判断决定是否允许进入。
     }
   }
 
@@ -103,6 +114,15 @@ router.beforeEach(async (to) => {
       query: {
         redirect: to.fullPath,
       },
+    }
+  }
+
+  if (
+    to.meta.requiresAdmin &&
+    authStore.user?.role !== 'ADMIN'
+  ) {
+    return {
+      name: 'home',
     }
   }
 

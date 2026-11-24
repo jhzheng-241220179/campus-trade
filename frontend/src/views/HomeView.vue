@@ -1,6 +1,6 @@
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useRouter } from 'vue-router'
 
@@ -15,6 +15,13 @@ const {
   initialized,
   loading,
 } = storeToRefs(authStore)
+
+const isAdmin = computed(
+  () =>
+    initialized.value &&
+    isAuthenticated.value &&
+    user.value?.role === 'ADMIN',
+)
 
 const loggingOut = ref(false)
 const errorMessage = ref('')
@@ -91,6 +98,14 @@ async function handleLogout() {
 
             <RouterLink to="/products/mine" class="nav-link">
               我的商品
+            </RouterLink>
+
+            <RouterLink
+              v-if="isAdmin"
+              to="/admin"
+              class="admin-link"
+            >
+              管理后台
             </RouterLink>
 
             <span class="user-name">
@@ -298,6 +313,24 @@ async function handleLogout() {
 
 .nav-link:hover {
   color: #4169e1;
+}
+
+.admin-link {
+  display: inline-flex;
+  align-items: center;
+  padding: 9px 13px;
+  border: 1px solid #cdd8fa;
+  border-radius: 9px;
+  background: #eef3ff;
+  color: #3458c6;
+  font-size: 14px;
+  font-weight: 650;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.admin-link:hover {
+  background: #dfe8ff;
 }
 
 .user-name {
