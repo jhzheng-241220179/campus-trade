@@ -21,13 +21,17 @@ public class ProductService {
 
     private final ProductMapper productMapper;
     private final JdbcTemplate jdbcTemplate;
+    private final ReservationLifecycleService reservationLifecycleService;
 
     public ProductService(
             ProductMapper productMapper,
-            JdbcTemplate jdbcTemplate
+            JdbcTemplate jdbcTemplate,
+            ReservationLifecycleService reservationLifecycleService
     ) {
         this.productMapper = productMapper;
         this.jdbcTemplate = jdbcTemplate;
+        this.reservationLifecycleService =
+                reservationLifecycleService;
     }
 
     public List<Product> listPublishedProducts() {
@@ -134,6 +138,7 @@ public class ProductService {
         lockAndCheckSeller(sellerId);
 
         Product product = productMapper.findById(id);
+
         requireOwner(product, id, sellerId);
 
         if (!"DRAFT".equals(product.getStatus())) {
@@ -175,6 +180,7 @@ public class ProductService {
         lockAndCheckSeller(sellerId);
 
         Product product = productMapper.findById(id);
+
         requireOwner(product, id, sellerId);
 
         if (!"DRAFT".equals(product.getStatus())) {
@@ -204,6 +210,7 @@ public class ProductService {
         lockAndCheckSeller(sellerId);
 
         Product product = productMapper.findById(id);
+
         requireOwner(product, id, sellerId);
 
         if (!"PUBLISHED".equals(product.getStatus())) {
@@ -211,6 +218,10 @@ public class ProductService {
                     "只有已发布的商品允许下架"
             );
         }
+
+        // 存在有效预约时，不允许卖家直接下架商品。
+        reservationLifecycleService
+                .requireNoActiveRound(id);
 
         int rows = productMapper.offShelfOwnedPublished(
                 id,

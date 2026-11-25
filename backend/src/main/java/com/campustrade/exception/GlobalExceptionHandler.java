@@ -1,14 +1,17 @@
 
 package com.campustrade.exception;
-import org.springframework.web.server.ResponseStatusException;
+
 import com.campustrade.common.ApiResponse;
-import org.springframework.security.core.AuthenticationException;
+
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.core.AuthenticationException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 @RestControllerAdvice
@@ -16,32 +19,34 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<ApiResponse<Void>> handleIllegalArgument(
-            IllegalArgumentException ex) {
-
+            IllegalArgumentException ex
+    ) {
         return ResponseEntity
                 .badRequest()
                 .body(ApiResponse.error(400, ex.getMessage()));
     }
-    @ExceptionHandler(ResponseStatusException.class)
-        public ResponseEntity<ApiResponse<Void>> handleResponseStatusException(
-                ResponseStatusException ex) {
 
+    @ExceptionHandler(ResponseStatusException.class)
+    public ResponseEntity<ApiResponse<Void>> handleResponseStatusException(
+            ResponseStatusException ex
+    ) {
         int status = ex.getStatusCode().value();
 
         String message = ex.getReason();
 
         if (message == null || message.isBlank()) {
-                message = "请求处理失败";
+            message = "请求处理失败";
         }
 
         return ResponseEntity
                 .status(ex.getStatusCode())
                 .body(ApiResponse.error(status, message));
-        }
+    }
+
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<ApiResponse<Void>> handleValidation(
-            MethodArgumentNotValidException ex) {
-
+            MethodArgumentNotValidException ex
+    ) {
         String message = ex.getBindingResult()
                 .getFieldErrors()
                 .stream()
@@ -60,39 +65,39 @@ public class GlobalExceptionHandler {
     })
     @ResponseStatus(HttpStatus.CONFLICT)
     public ApiResponse<Void> handleProductConflict(
-            RuntimeException ex) {
-
+            RuntimeException ex
+    ) {
         return ApiResponse.error(409, ex.getMessage());
     }
 
     @ExceptionHandler(ProductNotFoundException.class)
     @ResponseStatus(HttpStatus.NOT_FOUND)
     public ApiResponse<Void> handleProductNotFound(
-            ProductNotFoundException ex) {
-
+            ProductNotFoundException ex
+    ) {
         return ApiResponse.error(404, ex.getMessage());
     }
 
     @ExceptionHandler(NoResourceFoundException.class)
     @ResponseStatus(HttpStatus.NOT_FOUND)
     public ApiResponse<Void> handleNotFound(
-            NoResourceFoundException ex) {
-
+            NoResourceFoundException ex
+    ) {
         return ApiResponse.error(404, "请求的资源不存在");
     }
 
     @ExceptionHandler(EmailAlreadyRegisteredException.class)
     @ResponseStatus(HttpStatus.CONFLICT)
     public ApiResponse<Void> handleEmailAlreadyRegistered(
-            EmailAlreadyRegisteredException ex) {
-
+            EmailAlreadyRegisteredException ex
+    ) {
         return ApiResponse.error(409, ex.getMessage());
     }
 
     @ExceptionHandler(VerificationCodeLimitException.class)
     public ResponseEntity<ApiResponse<Void>> handleVerificationLimit(
-            VerificationCodeLimitException ex) {
-
+            VerificationCodeLimitException ex
+    ) {
         return ResponseEntity
                 .status(HttpStatus.TOO_MANY_REQUESTS)
                 .body(ApiResponse.error(
@@ -101,23 +106,42 @@ public class GlobalExceptionHandler {
                 ));
     }
 
-    @ExceptionHandler(Exception.class)
-    public ResponseEntity<ApiResponse<Void>> handleException(
-            Exception ex) {
+    @ExceptionHandler(AuthenticationException.class)
+    public ResponseEntity<ApiResponse<Void>> handleAuthentication(
+            AuthenticationException ex
+    ) {
+        return ResponseEntity
+                .status(HttpStatus.UNAUTHORIZED)
+                .body(ApiResponse.error(
+                        401,
+                        "邮箱或密码错误，或账户不可登录"
+                ));
+    }
+
+    @ExceptionHandler(AccessDeniedException.class)
+    public ResponseEntity<ApiResponse<Void>> handleAccessDenied(
+            AccessDeniedException ex
+    ) {
+        String message = ex.getMessage();
+
+        if (message == null || message.isBlank()) {
+            message = "没有执行该操作的权限";
+        }
 
         return ResponseEntity
-                .status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(ApiResponse.error(500, "服务器内部错误"));
+                .status(HttpStatus.FORBIDDEN)
+                .body(ApiResponse.error(403, message));
     }
-    @ExceptionHandler(AuthenticationException.class)
-public ResponseEntity<ApiResponse<Void>> handleAuthentication(
-        AuthenticationException ex) {
 
-    return ResponseEntity
-            .status(HttpStatus.UNAUTHORIZED)
-            .body(ApiResponse.error(
-                    401,
-                    "邮箱或密码错误，或账户不可登录"
-            ));
-}
+    @ExceptionHandler(Exception.class)
+    public ResponseEntity<ApiResponse<Void>> handleException(
+            Exception ex
+    ) {
+        return ResponseEntity
+                .status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(ApiResponse.error(
+                        500,
+                        "服务器内部错误"
+                ));
+    }
 }

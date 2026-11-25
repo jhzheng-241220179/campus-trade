@@ -10,6 +10,7 @@ import com.campustrade.model.Product;
 
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
@@ -19,13 +20,17 @@ public class AdminProductService {
 
     private final ProductMapper productMapper;
     private final JdbcTemplate jdbcTemplate;
+    private final ReservationLifecycleService reservationLifecycleService;
 
     public AdminProductService(
             ProductMapper productMapper,
-            JdbcTemplate jdbcTemplate
+            JdbcTemplate jdbcTemplate,
+            ReservationLifecycleService reservationLifecycleService
     ) {
         this.productMapper = productMapper;
         this.jdbcTemplate = jdbcTemplate;
+        this.reservationLifecycleService =
+                reservationLifecycleService;
     }
 
     @Transactional(readOnly = true)
@@ -36,7 +41,7 @@ public class AdminProductService {
                 .toList();
     }
 
-    @Transactional
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public void forceOffShelf(Long productId) {
         if (productId == null || productId <= 0) {
             throw new ProductConflictException(
@@ -44,8 +49,8 @@ public class AdminProductService {
             );
         }
 
-        // 先读取商品对应的卖家 ID。
-        Product snapshot = productMapper.findById(productId);
+        Product snapshot =
+                productMapper.findById(productId);
 
         if (snapshot == null) {
             throw new ProductNotFoundException(productId);
@@ -53,7 +58,6 @@ public class AdminProductService {
 
         Long sellerId = snapshot.getSellerId();
 
-        // 和封禁、商品发布使用相同的用户行锁。
         List<Long> lockedUsers = jdbcTemplate.query(
                 """
                 SELECT id
@@ -71,7 +75,6 @@ public class AdminProductService {
             );
         }
 
-        // 取得用户锁后再次读取商品，避免使用过期状态。
         Product product =
                 productMapper.findByIdForUpdate(productId);
 
@@ -90,6 +93,12 @@ public class AdminProductService {
                     "只有已发布商品可以被强制下架"
             );
         }
+
+        reservationLifecycleService
+                .cancelProductReservations(
+                        productId,
+                        "ADMIN_OFF_SHELF"
+                );
 
         int rows = jdbcTemplate.update(
                 """

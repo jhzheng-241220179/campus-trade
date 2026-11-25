@@ -18,12 +18,18 @@ import static org.mockito.Mockito.*;
 class AdminAccountServiceTest {
 
     private JdbcTemplate jdbcTemplate;
+    private ReservationLifecycleService lifecycle;
     private AdminAccountService service;
 
     @BeforeEach
     void setUp() {
         jdbcTemplate = mock(JdbcTemplate.class);
-        service = new AdminAccountService(jdbcTemplate);
+        lifecycle = mock(ReservationLifecycleService.class);
+
+        service = new AdminAccountService(
+                jdbcTemplate,
+                lifecycle
+        );
     }
 
     private void givenUser(
@@ -114,6 +120,8 @@ class AdminAccountServiceTest {
                 anyString(),
                 (Object) any()
         );
+
+        verifyNoInteractions(lifecycle);
     }
 
     @Test
@@ -129,6 +137,8 @@ class AdminAccountServiceTest {
                 anyString(),
                 (Object) any()
         );
+
+        verifyNoInteractions(lifecycle);
     }
 
     @Test
@@ -144,6 +154,8 @@ class AdminAccountServiceTest {
                 anyString(),
                 (Object) any()
         );
+
+        verifyNoInteractions(lifecycle);
     }
 
     @Test
@@ -164,5 +176,81 @@ class AdminAccountServiceTest {
                 anyString(),
                 (Object) any()
         );
+
+        verifyNoInteractions(lifecycle);
+    }
+
+    @Test
+    void banShouldCancelSellerAndBuyerReservations() {
+        givenUser("USER", "ACTIVE", true);
+
+        when(jdbcTemplate.update(
+                contains("UPDATE users"),
+                eq(5L)
+        )).thenReturn(1);
+
+        service.ban(5L);
+
+        var order = inOrder(jdbcTemplate, lifecycle);
+
+        order.verify(jdbcTemplate).update(
+                contains("UPDATE users"),
+                eq(5L)
+        );
+
+        order.verify(lifecycle)
+                .cancelSellerReservations(5L);
+
+        order.verify(lifecycle)
+                .cancelBuyerReservations(5L);
+
+        order.verify(jdbcTemplate).update(
+                contains("UPDATE products"),
+                eq(5L)
+        );
+    }
+
+    @Test
+    void unbanShouldNotRestoreReservations() {
+        givenUser("USER", "BANNED", true);
+
+        when(jdbcTemplate.update(
+                contains("UPDATE users"),
+                eq(5L)
+        )).thenReturn(1);
+
+        service.unban(5L);
+
+        verifyNoInteractions(lifecycle);
+    }
+
+    @Test
+    void cancellationFailurePreventsProductWithdrawal() {
+        givenUser("USER", "ACTIVE", true);
+
+        when(jdbcTemplate.update(
+                contains("UPDATE users"),
+                eq(5L)
+        )).thenReturn(1);
+
+        doThrow(
+                new ProductConflictException(
+                        "预约取消失败"
+                )
+        ).when(lifecycle)
+                .cancelSellerReservations(5L);
+
+        assertThrows(
+                ProductConflictException.class,
+                () -> service.ban(5L)
+        );
+
+        verify(jdbcTemplate, never()).update(
+                contains("UPDATE products"),
+                eq(5L)
+        );
+
+        verify(lifecycle, never())
+                .cancelBuyerReservations(5L);
     }
 }

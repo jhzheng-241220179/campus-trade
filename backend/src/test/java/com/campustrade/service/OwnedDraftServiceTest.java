@@ -22,9 +22,11 @@ class OwnedDraftServiceTest {
     @BeforeEach
     void setUp() {
         mapper = mock(ProductMapper.class);
+
         service = new ProductService(
                 mapper,
-                mock(JdbcTemplate.class)
+                mock(JdbcTemplate.class),
+                mock(ReservationLifecycleService.class)
         );
     }
 
@@ -34,16 +36,20 @@ class OwnedDraftServiceTest {
             String status
     ) {
         Product p = new Product();
+
         p.setId(id);
         p.setSellerId(sellerId);
         p.setStatus(status);
+
         return p;
     }
 
     @Test
     void shouldReturnOwnedDraft() {
         Product draft = product(8L, 1L, "DRAFT");
-        when(mapper.findById(8L)).thenReturn(draft);
+
+        when(mapper.findById(8L))
+                .thenReturn(draft);
 
         assertSame(
                 draft,

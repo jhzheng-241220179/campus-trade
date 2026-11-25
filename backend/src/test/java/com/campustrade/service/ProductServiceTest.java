@@ -31,7 +31,12 @@ class ProductServiceTest {
     void setUp() {
         mapper = mock(ProductMapper.class);
         jdbc = mock(JdbcTemplate.class);
-        service = new ProductService(mapper, jdbc);
+
+        service = new ProductService(
+                mapper,
+                jdbc,
+                mock(ReservationLifecycleService.class)
+        );
 
         when(jdbc.query(
                 anyString(),
@@ -48,12 +53,14 @@ class ProductServiceTest {
             int version
     ) {
         Product p = new Product();
+
         p.setId(id);
         p.setSellerId(sellerId);
         p.setTitle("旧标题");
         p.setPrice(new BigDecimal("25.00"));
         p.setStatus(status);
         p.setVersion(version);
+
         return p;
     }
 

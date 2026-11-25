@@ -5,6 +5,7 @@ import com.campustrade.exception.ProductConflictException;
 
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
@@ -13,9 +14,15 @@ import java.util.List;
 public class AdminAccountService {
 
     private final JdbcTemplate jdbcTemplate;
+    private final ReservationLifecycleService reservationLifecycleService;
 
-    public AdminAccountService(JdbcTemplate jdbcTemplate) {
+    public AdminAccountService(
+            JdbcTemplate jdbcTemplate,
+            ReservationLifecycleService reservationLifecycleService
+    ) {
         this.jdbcTemplate = jdbcTemplate;
+        this.reservationLifecycleService =
+                reservationLifecycleService;
     }
 
     private record TargetUser(
@@ -60,9 +67,10 @@ public class AdminAccountService {
         }
     }
 
-    @Transactional
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public void ban(Long userId) {
         TargetUser user = lockUser(userId);
+
         requireNormalUser(user);
 
         if (!"ACTIVE".equals(user.status())) {
@@ -88,8 +96,16 @@ public class AdminAccountService {
             );
         }
 
-        // 已发布的商品全部撤回成草稿。
-        // 原有草稿和 OFF_SHELF 商品不受影响。
+        // 取消该用户作为卖家时的有效预约。
+        reservationLifecycleService
+                .cancelSellerReservations(userId);
+
+        // 取消该用户作为买家时的有效预约。
+        reservationLifecycleService
+                .cancelBuyerReservations(userId);
+
+        // 已发布商品撤回为草稿。
+        // 原有草稿、已下架商品及图片保持不变。
         jdbcTemplate.update(
                 """
                 UPDATE products
@@ -105,6 +121,7 @@ public class AdminAccountService {
     @Transactional
     public void unban(Long userId) {
         TargetUser user = lockUser(userId);
+
         requireNormalUser(user);
 
         if (!"BANNED".equals(user.status())) {
@@ -137,7 +154,7 @@ public class AdminAccountService {
             );
         }
 
-        // 解封后不自动发布商品。
-        // 卖家重新登录后，可以自行编辑和发布草稿。
+        // 解封后不恢复历史预约。
+        // 商品保持草稿，由用户自行决定是否重新发布。
     }
 }

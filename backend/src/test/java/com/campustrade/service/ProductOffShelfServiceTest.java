@@ -23,13 +23,20 @@ class ProductOffShelfServiceTest {
 
     private ProductMapper mapper;
     private JdbcTemplate jdbc;
+    private ReservationLifecycleService lifecycle;
     private ProductService service;
 
     @BeforeEach
     void setUp() {
         mapper = mock(ProductMapper.class);
         jdbc = mock(JdbcTemplate.class);
-        service = new ProductService(mapper, jdbc);
+        lifecycle = mock(ReservationLifecycleService.class);
+
+        service = new ProductService(
+                mapper,
+                jdbc,
+                lifecycle
+        );
 
         when(jdbc.query(
                 anyString(),
@@ -44,10 +51,12 @@ class ProductOffShelfServiceTest {
             String status
     ) {
         Product p = new Product();
+
         p.setId(5L);
         p.setSellerId(sellerId);
         p.setStatus(status);
         p.setVersion(3);
+
         return p;
     }
 
@@ -76,6 +85,8 @@ class ProductOffShelfServiceTest {
                 AccessDeniedException.class,
                 () -> service.offShelfProduct(5L, 1L)
         );
+
+        verifyNoInteractions(lifecycle);
     }
 
     @Test
@@ -87,6 +98,8 @@ class ProductOffShelfServiceTest {
                 ProductStatusException.class,
                 () -> service.offShelfProduct(5L, 1L)
         );
+
+        verifyNoInteractions(lifecycle);
     }
 
     @Test
@@ -98,6 +111,8 @@ class ProductOffShelfServiceTest {
                 ProductStatusException.class,
                 () -> service.offShelfProduct(5L, 1L)
         );
+
+        verifyNoInteractions(lifecycle);
     }
 
     @Test
@@ -106,6 +121,8 @@ class ProductOffShelfServiceTest {
                 ProductNotFoundException.class,
                 () -> service.offShelfProduct(5L, 1L)
         );
+
+        verifyNoInteractions(lifecycle);
     }
 
     @Test
@@ -128,5 +145,52 @@ class ProductOffShelfServiceTest {
                 ProductNotFoundException.class,
                 () -> service.getPublishedProductById(5L)
         );
+    }
+
+    @Test
+    void cannotOffShelfProductWithActiveReservations() {
+        when(mapper.findById(5L))
+                .thenReturn(product(1L, "PUBLISHED"));
+
+        doThrow(
+                new ProductConflictException(
+                        "当前商品存在有效预约"
+                )
+        ).when(lifecycle)
+                .requireNoActiveRound(5L);
+
+        assertThrows(
+                ProductConflictException.class,
+                () -> service.offShelfProduct(5L, 1L)
+        );
+
+        verify(mapper, never())
+                .offShelfOwnedPublished(
+                        anyLong(),
+                        anyLong(),
+                        anyInt()
+                );
+    }
+
+    @Test
+    void checksReservationsBeforeOffShelf() {
+        when(mapper.findById(5L))
+                .thenReturn(product(1L, "PUBLISHED"));
+
+        when(mapper.offShelfOwnedPublished(
+                5L, 1L, 3
+        )).thenReturn(1);
+
+        service.offShelfProduct(5L, 1L);
+
+        var order = inOrder(lifecycle, mapper);
+
+        order.verify(lifecycle)
+                .requireNoActiveRound(5L);
+
+        order.verify(mapper)
+                .offShelfOwnedPublished(
+                        5L, 1L, 3
+                );
     }
 }

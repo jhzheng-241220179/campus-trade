@@ -10,11 +10,14 @@ export interface Product {
   category: string
   description: string
   conditionLevel: string
-  contact: string
   status: string
   version: number
   createdAt: string
   updatedAt: string
+}
+
+export interface OwnedProduct extends Product {
+  contact: string
 }
 
 export interface ProductCreateRequest {
@@ -26,7 +29,8 @@ export interface ProductCreateRequest {
   contact: string
 }
 
-export interface ProductUpdateRequest extends ProductCreateRequest {
+export interface ProductUpdateRequest
+  extends ProductCreateRequest {
   version: number
 }
 
@@ -39,7 +43,9 @@ export interface ProductImage {
 
 export async function getProducts(): Promise<Product[]> {
   const response =
-    await api.get<ApiResponse<Product[]>>('/products')
+    await api.get<ApiResponse<Product[]>>(
+      '/products',
+    )
 
   return response.data.data
 }
@@ -48,23 +54,28 @@ export async function getProductById(
   id: number,
 ): Promise<Product> {
   const response =
-    await api.get<ApiResponse<Product>>(`/products/${id}`)
+    await api.get<ApiResponse<Product>>(
+      `/products/${id}`,
+    )
 
   return response.data.data
 }
 
-export async function getMyProducts(): Promise<Product[]> {
+export async function getMyProducts():
+  Promise<OwnedProduct[]> {
   const response =
-    await api.get<ApiResponse<Product[]>>('/products/mine')
+    await api.get<ApiResponse<OwnedProduct[]>>(
+      '/products/mine',
+    )
 
   return response.data.data
 }
 
 export async function getMyDraft(
   id: number,
-): Promise<Product> {
+): Promise<OwnedProduct> {
   const response =
-    await api.get<ApiResponse<Product>>(
+    await api.get<ApiResponse<OwnedProduct>>(
       `/products/mine/${id}`,
     )
 
@@ -82,7 +93,10 @@ export async function createProduct(
   request: ProductCreateRequest,
 ): Promise<number> {
   const response =
-    await api.post<ApiResponse<number>>('/products', request)
+    await api.post<ApiResponse<number>>(
+      '/products',
+      request,
+    )
 
   return response.data.data
 }
@@ -102,9 +116,10 @@ export async function offShelfProduct(
 export async function getProductImages(
   productId: number,
 ): Promise<ProductImage[]> {
-  const response = await api.get<ApiResponse<ProductImage[]>>(
-    `/products/${productId}/images`,
-  )
+  const response =
+    await api.get<ApiResponse<ProductImage[]>>(
+      `/products/${productId}/images`,
+    )
 
   return response.data.data
 }
@@ -114,12 +129,14 @@ export async function uploadProductImage(
   file: File,
 ): Promise<ProductImage> {
   const formData = new FormData()
+
   formData.append('file', file)
 
-  const response = await api.post<ApiResponse<ProductImage>>(
-    `/products/${productId}/images`,
-    formData,
-  )
+  const response =
+    await api.post<ApiResponse<ProductImage>>(
+      `/products/${productId}/images`,
+      formData,
+    )
 
   return response.data.data
 }

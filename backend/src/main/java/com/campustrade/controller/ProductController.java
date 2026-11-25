@@ -4,6 +4,7 @@ package com.campustrade.controller;
 import com.campustrade.common.ApiResponse;
 import com.campustrade.dto.ProductCreateRequest;
 import com.campustrade.dto.ProductUpdateRequest;
+import com.campustrade.dto.PublicProductResponse;
 import com.campustrade.model.Product;
 import com.campustrade.security.CurrentUserIdResolver;
 import com.campustrade.service.ProductService;
@@ -30,13 +31,19 @@ public class ProductController {
         this.currentUserIdResolver = currentUserIdResolver;
     }
 
+    // 公开商品列表，不返回卖家联系方式。
     @GetMapping
-    public ApiResponse<List<Product>> listProducts() {
-        return ApiResponse.success(
+    public ApiResponse<List<PublicProductResponse>> listProducts() {
+        List<PublicProductResponse> products =
                 productService.listPublishedProducts()
-        );
+                        .stream()
+                        .map(PublicProductResponse::from)
+                        .toList();
+
+        return ApiResponse.success(products);
     }
 
+    // 卖家管理自己的商品，保留完整商品信息。
     @GetMapping("/mine")
     public ApiResponse<List<Product>> listMyProducts(
             Authentication authentication
@@ -49,6 +56,7 @@ public class ProductController {
         );
     }
 
+    // 卖家编辑自己的草稿，保留联系方式。
     @GetMapping("/mine/{id}")
     public ApiResponse<Product> getMyDraft(
             @PathVariable Long id,
@@ -58,16 +66,23 @@ public class ProductController {
                 .requireCurrentUserId(authentication);
 
         return ApiResponse.success(
-                productService.getOwnedDraftById(id, sellerId)
+                productService.getOwnedDraftById(
+                        id,
+                        sellerId
+                )
         );
     }
 
+    // 公开商品详情，不返回卖家联系方式。
     @GetMapping("/{id}")
-    public ApiResponse<Product> getProduct(
+    public ApiResponse<PublicProductResponse> getProduct(
             @PathVariable Long id
     ) {
+        Product product =
+                productService.getPublishedProductById(id);
+
         return ApiResponse.success(
-                productService.getPublishedProductById(id)
+                PublicProductResponse.from(product)
         );
     }
 

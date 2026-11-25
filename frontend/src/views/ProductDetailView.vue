@@ -1,6 +1,6 @@
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { ref, watch, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import axios from 'axios'
 
@@ -14,6 +14,9 @@ import type {
   ProductImage,
 } from '../api/products'
 
+import ReservationPanel
+  from '../components/ReservationPanel.vue'
+
 const route = useRoute()
 
 const product = ref<Product | null>(null)
@@ -25,7 +28,9 @@ const errorMessage = ref('')
 
 let requestVersion = 0
 
-function formatPrice(price: number | string): string {
+function formatPrice(
+  price: number | string,
+): string {
   const value = Number(price)
 
   return Number.isFinite(value)
@@ -33,8 +38,12 @@ function formatPrice(price: number | string): string {
     : '价格待确认'
 }
 
-function formatDate(date: string | null): string {
-  if (!date) return '暂无时间信息'
+function formatDate(
+  date: string | null,
+): string {
+  if (!date) {
+    return '暂无时间信息'
+  }
 
   const parsed = new Date(date)
 
@@ -51,6 +60,7 @@ async function loadProduct() {
   product.value = null
   images.value = []
   activeImageId.value = null
+
   loading.value = true
   errorMessage.value = ''
 
@@ -76,39 +86,51 @@ async function loadProduct() {
   try {
     const result = await getProductById(id)
 
-    if (currentRequest !== requestVersion) return
+    if (currentRequest !== requestVersion) {
+      return
+    }
 
     product.value = result
 
     try {
-      const imageResult = await getProductImages(id)
+      const imageResult =
+        await getProductImages(id)
 
-      if (currentRequest !== requestVersion) return
+      if (currentRequest !== requestVersion) {
+        return
+      }
 
       images.value = [...imageResult].sort(
-        (a, b) => a.displayOrder - b.displayOrder,
+        (a, b) =>
+          a.displayOrder - b.displayOrder,
       )
 
       activeImageId.value =
         images.value[0]?.id ?? null
     } catch (imageError) {
-      // 图片获取失败不影响商品文字详情。
-      console.warn('商品图片加载失败', imageError)
+      console.warn(
+        '商品图片加载失败',
+        imageError,
+      )
     }
   } catch (error) {
-    if (currentRequest !== requestVersion) return
+    if (currentRequest !== requestVersion) {
+      return
+    }
 
     if (
       axios.isAxiosError(error) &&
       error.response?.status === 404
     ) {
-      errorMessage.value = '商品不存在或尚未发布'
+      errorMessage.value =
+        '商品不存在或尚未发布'
     } else if (axios.isAxiosError(error)) {
       errorMessage.value =
         error.response?.data?.message ||
         '商品加载失败，请稍后重试'
     } else {
-      errorMessage.value = '商品加载失败，请稍后重试'
+      errorMessage.value =
+        '商品加载失败，请稍后重试'
     }
   } finally {
     if (currentRequest === requestVersion) {
@@ -124,6 +146,10 @@ watch(
   },
   { immediate: true },
 )
+
+onUnmounted(() => {
+  requestVersion++
+})
 </script>
 
 <template>
@@ -132,10 +158,14 @@ watch(
       <header class="header">
         <RouterLink to="/" class="brand">
           <span class="brand-icon">C</span>
+
           <span>CampusTrade</span>
         </RouterLink>
 
-        <RouterLink to="/products" class="back-link">
+        <RouterLink
+          to="/products"
+          class="back-link"
+        >
           返回商品列表
         </RouterLink>
       </header>
@@ -154,6 +184,7 @@ watch(
         role="alert"
       >
         <h2>无法查看商品</h2>
+
         <p>{{ errorMessage }}</p>
 
         <button
@@ -172,9 +203,15 @@ watch(
       <template v-else-if="product">
         <nav class="breadcrumb">
           <RouterLink to="/">首页</RouterLink>
+
           <span>/</span>
-          <RouterLink to="/products">商品广场</RouterLink>
+
+          <RouterLink to="/products">
+            商品广场
+          </RouterLink>
+
           <span>/</span>
+
           <span>{{ product.title }}</span>
         </nav>
 
@@ -184,12 +221,14 @@ watch(
               <img
                 v-if="
                   images.some(
-                    (image) => image.id === activeImageId
+                    (image) =>
+                      image.id === activeImageId
                   )
                 "
                 :src="
                   images.find(
-                    (image) => image.id === activeImageId
+                    (image) =>
+                      image.id === activeImageId
                   )?.url
                 "
                 :alt="product.title"
@@ -197,6 +236,7 @@ watch(
 
               <div v-else class="placeholder">
                 <span>CT</span>
+
                 <p>暂无商品图片</p>
               </div>
             </div>
@@ -213,7 +253,9 @@ watch(
                 :class="{
                   active: activeImageId === image.id,
                 }"
-                :aria-label="`查看第${image.displayOrder + 1}张图片`"
+                :aria-label="
+                  `查看第${image.displayOrder + 1}张图片`
+                "
                 @click="activeImageId = image.id"
               >
                 <img
@@ -238,6 +280,7 @@ watch(
             <div class="information-grid">
               <div>
                 <span>商品分类</span>
+
                 <strong>
                   {{ product.category || '未分类' }}
                 </strong>
@@ -245,13 +288,18 @@ watch(
 
               <div>
                 <span>商品成色</span>
+
                 <strong>
-                  {{ product.conditionLevel || '未填写' }}
+                  {{
+                    product.conditionLevel ||
+                    '未填写'
+                  }}
                 </strong>
               </div>
 
               <div>
                 <span>发布时间</span>
+
                 <strong>
                   {{ formatDate(product.createdAt) }}
                 </strong>
@@ -259,13 +307,16 @@ watch(
 
               <div>
                 <span>商品编号</span>
+
                 <strong>#{{ product.id }}</strong>
               </div>
             </div>
 
-            <div class="notice">
-              商品预约和在线交易功能将在后续版本开放。
-            </div>
+            <ReservationPanel
+              :key="product.id"
+              :product-id="product.id"
+              :seller-id="product.sellerId"
+            />
           </section>
         </div>
 
@@ -346,6 +397,7 @@ watch(
 .detail-layout {
   display: grid;
   grid-template-columns: 1.05fr 1fr;
+  align-items: start;
   gap: 34px;
 }
 
@@ -360,7 +412,11 @@ watch(
 
 .main-image {
   height: 430px;
-  background: linear-gradient(135deg, #edf2ff, #f6f8ff);
+  background: linear-gradient(
+    135deg,
+    #edf2ff,
+    #f6f8ff
+  );
 }
 
 .main-image > img {
@@ -454,7 +510,8 @@ watch(
 
 .information-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns:
+    repeat(2, minmax(0, 1fr));
   gap: 26px 20px;
   padding: 28px 0;
   border-top: 1px solid #edf0f5;
@@ -475,15 +532,6 @@ watch(
   color: #334155;
   font-size: 14px;
   overflow-wrap: anywhere;
-}
-
-.notice {
-  padding: 16px;
-  border-radius: 9px;
-  background: #f1f5ff;
-  color: #64748b;
-  font-size: 13px;
-  line-height: 1.8;
 }
 
 .description-card {
