@@ -68,7 +68,7 @@ const statusLabels: Record<
 }
 
 // 后端预约时间统一使用北京时间。
-// LocalDateTime 本身不包含时区，因此显式补充 +08:00。
+// LocalDateTime 本身不包含时区。
 function parseServerTime(
   value: string | null,
 ): number | null {
@@ -141,6 +141,10 @@ function formatCountdown(
   return `${pad(minutes)}:${pad(remainingSeconds)}`
 }
 
+// ================================================
+// 当前预约阶段
+// ================================================
+
 const phase = computed(() => {
   const data = reservation.value
 
@@ -208,7 +212,7 @@ const phaseLabel = computed(() => {
       return '首位买家优先期'
 
     case 'COOLING':
-      return '预约冷静期'
+      return '动态加权抽签期'
 
     case 'FROZEN':
       return '预约已截止，等待卖家响应'
@@ -255,14 +259,10 @@ const countdown = computed(() => {
 
   switch (phase.value) {
     case 'PRIORITY':
-      return formatCountdown(
-        data.priorityEndsAt,
-      )
+      return formatCountdown(data.priorityEndsAt)
 
     case 'COOLING':
-      return formatCountdown(
-        data.coolingEndsAt,
-      )
+      return formatCountdown(data.coolingEndsAt)
 
     case 'FROZEN':
       return formatCountdown(
@@ -274,8 +274,120 @@ const countdown = computed(() => {
   }
 })
 
+// ================================================
+// 个人预约状态与候补排名
+// ================================================
+
+const reservationStatusLabel = computed(() => {
+  const status =
+    reservation.value?.reservationStatus
+
+  return status
+    ? statusLabels[status]
+    : ''
+})
+
+const showQueuePosition = computed(() => {
+  const data = reservation.value
+
+  return (
+    !!data &&
+    !isSeller.value &&
+    data.reservationStatus === 'ACTIVE' &&
+    (
+      phase.value === 'PRIORITY' ||
+      phase.value === 'COOLING' ||
+      phase.value === 'FROZEN'
+    )
+  )
+})
+
+const waitingForFirstDraw = computed(() => {
+  const data = reservation.value
+
+  return (
+    !!data &&
+    (
+      phase.value === 'COOLING' ||
+      phase.value === 'FROZEN'
+    ) &&
+    data.drawVersion === 0
+  )
+})
+
+const queuePositionLabel = computed(() => {
+  const data = reservation.value
+
+  if (!data || waitingForFirstDraw.value) {
+    return '等待首次抽签'
+  }
+
+  if (
+    data.queuePosition === null ||
+    data.queuePosition <= 0
+  ) {
+    return '等待排名更新'
+  }
+
+  return `第 ${data.queuePosition} 位`
+})
+
+const queueDescription = computed(() => {
+  if (waitingForFirstDraw.value) {
+    return '优先期已结束，正在等待首次抽签结果同步。'
+  }
+
+  switch (phase.value) {
+    case 'PRIORITY':
+      return '优先期内按预约先后顺序排列。'
+
+    case 'COOLING':
+      return '新买家加入时重新抽签，当前排名可能变化。'
+
+    case 'FROZEN':
+      return '停止接受新预约，其他买家退出时排名依次顺延。'
+
+    default:
+      return ''
+  }
+})
+
+const showDrawVersion = computed(() => {
+  return (
+    reservation.value?.drawVersion != null &&
+    (
+      phase.value === 'PRIORITY' ||
+      phase.value === 'COOLING' ||
+      phase.value === 'FROZEN' ||
+      phase.value === 'MATCHING'
+    )
+  )
+})
+
+const drawVersionLabel = computed(() => {
+  const version =
+    reservation.value?.drawVersion
+
+  if (version == null) {
+    return '暂无抽签记录'
+  }
+
+  if (version === 0) {
+    return waitingForFirstDraw.value
+      ? '等待首次抽签'
+      : '尚未随机抽签'
+  }
+
+  return `第 ${version} 次抽签`
+})
+
+// ================================================
+// 操作权限
+// ================================================
+
 const canReserve = computed(() => {
   return (
+    authStore.isAuthenticated &&
     !isSeller.value &&
     reservation.value?.canReserve === true &&
     (
@@ -287,9 +399,13 @@ const canReserve = computed(() => {
 })
 
 const canCancel = computed(() => {
+  const data = reservation.value
+
   return (
+    authStore.isAuthenticated &&
     !isSeller.value &&
-    reservation.value?.canCancel === true &&
+    data?.canCancel === true &&
+    data.reservationId !== null &&
     (
       phase.value === 'PRIORITY' ||
       phase.value === 'COOLING' ||
@@ -298,12 +414,9 @@ const canCancel = computed(() => {
   )
 })
 
-const reservationStatusLabel = computed(() => {
-  const status =
-    reservation.value?.reservationStatus
-
-  return status ? statusLabels[status] : ''
-})
+// ================================================
+// 错误处理
+// ================================================
 
 function handleError(
   error: unknown,
@@ -312,12 +425,10 @@ function handleError(
   if (axios.isAxiosError(error)) {
     if (error.response?.status === 401) {
       authStore.clearUser()
-      return
-    }
 
-    if (error.response?.status === 404) {
       errorMessage.value =
-        '商品已不可预约，请返回商品列表刷新'
+        '登录状态已失效，请重新登录'
+
       return
     }
 
@@ -335,6 +446,10 @@ function handleError(
 
   errorMessage.value = fallback
 }
+
+// ================================================
+// 查询并同步预约状态
+// ================================================
 
 async function refreshReservation() {
   if (
@@ -379,6 +494,10 @@ async function refreshReservation() {
   }
 }
 
+// ================================================
+// 创建预约
+// ================================================
+
 async function handleReserve() {
   if (
     submitting.value ||
@@ -389,7 +508,8 @@ async function handleReserve() {
   }
 
   const confirmed = window.confirm(
-    '确认预约该商品？请及时关注后续预约状态。',
+    '确认预约该商品？' +
+    '候补排名可能随其他买家的加入而变化。',
   )
 
   if (!confirmed) {
@@ -414,7 +534,7 @@ async function handleReserve() {
     applyResponse(result)
 
     successMessage.value =
-      '预约成功，请关注后续交易安排。'
+      '预约成功，请关注候补排名及后续交易安排。'
   } catch (error) {
     if (version !== requestVersion) {
       return
@@ -433,12 +553,30 @@ async function handleReserve() {
   }
 }
 
+// ================================================
+// 取消指定预约
+// ================================================
+
 async function handleCancel() {
   if (
     submitting.value ||
     loading.value ||
     !canCancel.value
   ) {
+    return
+  }
+
+  // 保存用户当前正在操作的预约ID。
+  const reservationId =
+    reservation.value?.reservationId
+
+  if (
+    reservationId == null ||
+    reservationId <= 0
+  ) {
+    errorMessage.value =
+      '预约记录无效，请刷新页面后重试'
+
     return
   }
 
@@ -461,6 +599,7 @@ async function handleCancel() {
   try {
     const result = await cancelReservation(
       props.productId,
+      reservationId,
     )
 
     if (version !== requestVersion) {
@@ -488,7 +627,10 @@ async function handleCancel() {
   }
 }
 
-// 登录身份改变时，清除上一个用户的预约信息。
+// ================================================
+// 登录身份与组件生命周期
+// ================================================
+
 watch(
   () => authStore.user?.id,
   () => {
@@ -500,6 +642,10 @@ watch(
 
     errorMessage.value = ''
     successMessage.value = ''
+
+    serverOffset = 0
+    currentTime.value = Date.now()
+    lastRefreshAt = 0
 
     if (authStore.isAuthenticated) {
       void refreshReservation()
@@ -524,8 +670,7 @@ onMounted(async () => {
     }
   }, 1000)
 
-  // 商品详情属于公开页面，路由守卫不会
-  // 主动初始化身份，因此需要补充这一步。
+  // 商品详情属于公开页面，需要主动确认身份。
   if (!authStore.initialized) {
     try {
       await authStore.fetchCurrentUser()
@@ -634,6 +779,54 @@ onUnmounted(() => {
         </strong>
       </div>
 
+      <!-- 当前买家的候补排名 -->
+      <div
+        v-if="showQueuePosition"
+        class="queue-panel"
+        aria-live="polite"
+      >
+        <span class="queue-title">
+          我的候补排名
+        </span>
+
+        <div class="queue-position">
+          <strong>{{ queuePositionLabel }}</strong>
+
+          <span
+            v-if="
+              !waitingForFirstDraw &&
+              reservation.queuePosition !== null
+            "
+          >
+            / {{ reservation.activeReservationCount }} 人
+          </span>
+        </div>
+
+        <p
+          v-if="
+            reservation.queuePosition === 1 &&
+            !waitingForFirstDraw
+          "
+          class="first-candidate"
+        >
+          当前处于第一候选位置，等待卖家后续响应。
+        </p>
+
+        <p class="queue-description">
+          {{ queueDescription }}
+        </p>
+      </div>
+
+      <!-- 当前抽签版本 -->
+      <div
+        v-if="showDrawVersion"
+        class="draw-version-panel"
+      >
+        <span>当前抽签版本</span>
+
+        <strong>{{ drawVersionLabel }}</strong>
+      </div>
+
       <p
         v-if="successMessage"
         class="message success-message"
@@ -644,8 +837,8 @@ onUnmounted(() => {
 
       <template v-if="isSeller">
         <div class="notice">
-          这是你发布的商品，你可以查看预约人数，
-          但不能参与自己的商品预约。
+          这是你发布的商品，你可以查看预约人数
+          和当前抽签版本，但不能参与自己的商品预约。
         </div>
       </template>
 
@@ -680,7 +873,9 @@ onUnmounted(() => {
       <h3>预约规则</h3>
 
       <ul>
-        <li>首位买家预约后启动30分钟预约期。</li>
+        <li>
+          首位买家预约后启动30分钟预约期。
+        </li>
 
         <li>
           前1分钟为首位买家优先期，
@@ -688,7 +883,23 @@ onUnmounted(() => {
         </li>
 
         <li>
-          后续预约不会延长已有预约期限。
+          优先期结束后自动进行加权随机抽签，
+          较早预约者拥有较高或相同的抽签权重。
+        </li>
+
+        <li>
+          动态抽签期内，新买家加入将触发重新抽签，
+          已有预约期限不会延长。
+        </li>
+
+        <li>
+          买家取消预约后，其他候补者依次顺延，
+          不重新进行随机抽签。
+        </li>
+
+        <li>
+          30分钟预约期结束后冻结候补队列，
+          停止接受新预约。
         </li>
 
         <li>
@@ -696,14 +907,15 @@ onUnmounted(() => {
         </li>
 
         <li>
-          取消后不能重新加入同一轮预约。
+          取消后不能重新加入同一轮预约，
+          且10分钟内不能再次预约该商品。
         </li>
       </ul>
     </div>
 
     <p class="development-note">
-      当前为基础预约版本，动态抽签及卖家交易邀请
-      功能将在后续版本开放。
+      当前已支持动态抽签及候补队列。
+      卖家交易邀请、响应超时处理将在后续版本开放。
     </p>
 
     <p class="privacy-note">
@@ -795,6 +1007,75 @@ onUnmounted(() => {
   background: #ecfdf3;
   color: #16803c;
   font-size: 13px;
+}
+
+.queue-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  border: 1px solid #dce5f8;
+  border-radius: 10px;
+  background: white;
+}
+
+.queue-title {
+  color: #64748b;
+  font-size: 13px;
+}
+
+.queue-position {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.queue-position strong {
+  color: #4169e1;
+  font-size: 26px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.queue-position span {
+  color: #94a3b8;
+  font-size: 13px;
+}
+
+.first-candidate {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: #ecfdf3;
+  color: #16803c;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.queue-description {
+  margin: 0;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.8;
+}
+
+.draw-version-panel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #eef2f9;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.draw-version-panel strong {
+  color: #475569;
+  font-weight: 650;
 }
 
 .primary-button,

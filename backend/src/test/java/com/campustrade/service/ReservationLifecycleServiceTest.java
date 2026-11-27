@@ -4,8 +4,10 @@ package com.campustrade.service;
 import com.campustrade.exception.ProductConflictException;
 import com.campustrade.mapper.ProductReservationMapper;
 import com.campustrade.mapper.ReservationRoundMapper;
+import com.campustrade.model.ProductReservation;
 import com.campustrade.model.ReservationRound;
 import com.campustrade.model.ReservationRoundStatus;
+import com.campustrade.model.ReservationStatus;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -28,13 +30,15 @@ class ReservationLifecycleServiceTest {
     private static final Long ROUND_ID = 100L;
     private static final Long SELLER_ID = 2L;
     private static final Long BUYER_ID = 5L;
+    private static final Long RESERVATION_ID = 200L;
 
     private static final LocalDateTime NOW =
-            LocalDateTime.of(2026, 11, 25, 14, 0);
+            LocalDateTime.of(2026, 11, 27, 14, 0);
 
     private ReservationRoundMapper roundMapper;
     private ProductReservationMapper reservationMapper;
     private JdbcTemplate jdbcTemplate;
+    private ReservationDrawService drawService;
 
     private ReservationLifecycleService service;
 
@@ -50,8 +54,12 @@ class ReservationLifecycleServiceTest {
 
         jdbcTemplate = mock(JdbcTemplate.class);
 
+        drawService = mock(
+                ReservationDrawService.class
+        );
+
         Clock clock = Clock.fixed(
-                Instant.parse("2026-11-25T06:00:00Z"),
+                Instant.parse("2026-11-27T06:00:00Z"),
                 ZoneId.of("Asia/Shanghai")
         );
 
@@ -59,7 +67,8 @@ class ReservationLifecycleServiceTest {
                 roundMapper,
                 reservationMapper,
                 jdbcTemplate,
-                clock
+                clock,
+                drawService
         );
     }
 
@@ -77,6 +86,20 @@ class ReservationLifecycleServiceTest {
         round.setVersion(0);
         round.setDrawVersion(0);
 
+        LocalDateTime firstTime =
+                NOW.minusSeconds(30);
+
+        round.setFirstReservedAt(firstTime);
+        round.setPriorityEndsAt(
+                firstTime.plusMinutes(1)
+        );
+        round.setCoolingEndsAt(
+                firstTime.plusMinutes(30)
+        );
+        round.setSellerResponseDeadline(
+                firstTime.plusMinutes(60)
+        );
+
         return round;
     }
 
@@ -91,6 +114,30 @@ class ReservationLifecycleServiceTest {
         )).thenReturn(roundIds);
     }
 
+    private ProductReservation givenBuyerReservation(
+            Long roundId,
+            ReservationStatus status
+    ) {
+        ProductReservation reservation =
+                new ProductReservation();
+
+        reservation.setId(RESERVATION_ID);
+        reservation.setRoundId(roundId);
+        reservation.setBuyerId(BUYER_ID);
+        reservation.setStatus(status);
+        reservation.setReservationOrder(1);
+        reservation.setQueuePosition(1);
+        reservation.setVersion(0);
+
+        when(reservationMapper
+                .findByRoundAndBuyerForUpdate(
+                        roundId,
+                        BUYER_ID
+                )).thenReturn(reservation);
+
+        return reservation;
+    }
+
     private void givenBuyerCancellation(
             Long roundId,
             int affectedRows
@@ -103,9 +150,34 @@ class ReservationLifecycleServiceTest {
         )).thenReturn(affectedRows);
     }
 
-    // =============================================
+    private ReservationRound givenBuyerRound(
+            ReservationRoundStatus status
+    ) {
+        givenBuyerRoundIds(
+                List.of(ROUND_ID)
+        );
+
+        ReservationRound round = round(
+                ROUND_ID,
+                PRODUCT_ID,
+                status
+        );
+
+        when(roundMapper.findByIdForUpdate(
+                ROUND_ID
+        )).thenReturn(round);
+
+        givenBuyerReservation(
+                ROUND_ID,
+                ReservationStatus.ACTIVE
+        );
+
+        return round;
+    }
+
+    // =================================================
     // 卖家主动下架
-    // =============================================
+    // =================================================
 
     @Test
     void productWithoutActiveRoundCanOffShelf() {
@@ -119,7 +191,10 @@ class ReservationLifecycleServiceTest {
                 )
         );
 
-        verifyNoInteractions(reservationMapper);
+        verifyNoInteractions(
+                reservationMapper,
+                drawService
+        );
     }
 
     @Test
@@ -162,9 +237,9 @@ class ReservationLifecycleServiceTest {
         );
     }
 
-    // =============================================
+    // =================================================
     // 管理员强制下架
-    // =============================================
+    // =================================================
 
     @Test
     void cancellingProductWithoutRoundDoesNothing() {
@@ -177,7 +252,10 @@ class ReservationLifecycleServiceTest {
                 "ADMIN_OFF_SHELF"
         );
 
-        verifyNoInteractions(reservationMapper);
+        verifyNoInteractions(
+                reservationMapper,
+                drawService
+        );
 
         verify(roundMapper, never()).cancel(
                 anyLong(),
@@ -229,6 +307,8 @@ class ReservationLifecycleServiceTest {
                 NOW,
                 0
         );
+
+        verifyNoInteractions(drawService);
     }
 
     @Test
@@ -263,6 +343,8 @@ class ReservationLifecycleServiceTest {
                         "ADMIN_OFF_SHELF",
                         NOW
                 );
+
+        verifyNoInteractions(drawService);
     }
 
     @Test
@@ -293,9 +375,9 @@ class ReservationLifecycleServiceTest {
         );
     }
 
-    // =============================================
+    // =================================================
     // 封禁卖家
-    // =============================================
+    // =================================================
 
     @Test
     void sellerBanCancelsAllProductRounds() {
@@ -327,17 +409,17 @@ class ReservationLifecycleServiceTest {
         );
 
         when(roundMapper.cancel(
-                eq(100L),
-                eq("SELLER_BANNED"),
-                eq(NOW),
-                eq(0)
+                100L,
+                "SELLER_BANNED",
+                NOW,
+                0
         )).thenReturn(1);
 
         when(roundMapper.cancel(
-                eq(101L),
-                eq("SELLER_BANNED"),
-                eq(NOW),
-                eq(0)
+                101L,
+                "SELLER_BANNED",
+                NOW,
+                0
         )).thenReturn(1);
 
         service.cancelSellerReservations(SELLER_ID);
@@ -369,6 +451,8 @@ class ReservationLifecycleServiceTest {
                 NOW,
                 0
         );
+
+        verifyNoInteractions(drawService);
     }
 
     @Test
@@ -382,34 +466,24 @@ class ReservationLifecycleServiceTest {
 
         service.cancelSellerReservations(SELLER_ID);
 
-        verifyNoInteractions(roundMapper);
-        verifyNoInteractions(reservationMapper);
+        verifyNoInteractions(
+                roundMapper,
+                reservationMapper,
+                drawService
+        );
     }
 
-    // =============================================
-    // 封禁买家
-    // =============================================
+    // =================================================
+    // 封禁买家：原有业务回归测试
+    // =================================================
 
     @Test
     void buyerBanKeepsRoundWhenOtherBuyersRemain() {
-        givenBuyerRoundIds(
-                List.of(ROUND_ID)
+        ReservationRound round = givenBuyerRound(
+                ReservationRoundStatus.OPEN
         );
 
-        when(roundMapper.findByIdForUpdate(
-                ROUND_ID
-        )).thenReturn(
-                round(
-                        ROUND_ID,
-                        PRODUCT_ID,
-                        ReservationRoundStatus.OPEN
-                )
-        );
-
-        givenBuyerCancellation(
-                ROUND_ID,
-                1
-        );
+        givenBuyerCancellation(ROUND_ID, 1);
 
         when(reservationMapper.countActiveByRoundId(
                 ROUND_ID
@@ -437,28 +511,17 @@ class ReservationLifecycleServiceTest {
                         anyString(),
                         any(LocalDateTime.class)
                 );
+
+        verify(drawService).compactQueue(round);
     }
 
     @Test
     void banningLastBuyerClosesRound() {
-        givenBuyerRoundIds(
-                List.of(ROUND_ID)
+        givenBuyerRound(
+                ReservationRoundStatus.FROZEN
         );
 
-        when(roundMapper.findByIdForUpdate(
-                ROUND_ID
-        )).thenReturn(
-                round(
-                        ROUND_ID,
-                        PRODUCT_ID,
-                        ReservationRoundStatus.FROZEN
-                )
-        );
-
-        givenBuyerCancellation(
-                ROUND_ID,
-                1
-        );
+        givenBuyerCancellation(ROUND_ID, 1);
 
         when(reservationMapper.countActiveByRoundId(
                 ROUND_ID
@@ -479,32 +542,32 @@ class ReservationLifecycleServiceTest {
                 NOW,
                 0
         );
+
+        verifyNoInteractions(drawService);
     }
 
     @Test
     void alreadyCancelledReservationNeedsNoUpdate() {
-        givenBuyerRoundIds(
-                List.of(ROUND_ID)
+        givenBuyerRound(
+                ReservationRoundStatus.OPEN
         );
 
-        when(roundMapper.findByIdForUpdate(
-                ROUND_ID
-        )).thenReturn(
-                round(
-                        ROUND_ID,
-                        PRODUCT_ID,
-                        ReservationRoundStatus.OPEN
-                )
-        );
-
-        givenBuyerCancellation(
+        givenBuyerReservation(
                 ROUND_ID,
-                0
+                ReservationStatus.CANCELLED
         );
 
         service.cancelBuyerReservations(BUYER_ID);
 
-        verifyNoInteractions(reservationMapper);
+        verify(jdbcTemplate, never()).update(
+                contains("UPDATE product_reservations"),
+                eq(NOW),
+                eq(ROUND_ID),
+                eq(BUYER_ID)
+        );
+
+        verify(reservationMapper, never())
+                .countActiveByRoundId(anyLong());
 
         verify(roundMapper, never()).cancel(
                 anyLong(),
@@ -512,6 +575,8 @@ class ReservationLifecycleServiceTest {
                 any(LocalDateTime.class),
                 anyInt()
         );
+
+        verifyNoInteractions(drawService);
     }
 
     @Test
@@ -520,8 +585,11 @@ class ReservationLifecycleServiceTest {
 
         service.cancelBuyerReservations(BUYER_ID);
 
-        verifyNoInteractions(roundMapper);
-        verifyNoInteractions(reservationMapper);
+        verifyNoInteractions(
+                roundMapper,
+                reservationMapper,
+                drawService
+        );
     }
 
     @Test
@@ -544,6 +612,224 @@ class ReservationLifecycleServiceTest {
                 )
         );
 
-        verifyNoInteractions(reservationMapper);
+        verifyNoInteractions(
+                reservationMapper,
+                drawService
+        );
+    }
+
+    // =================================================
+    // Day 26 新增测试
+    // =================================================
+
+    @Test
+    void buyerBanDuringPriorityOnlyCompactsQueue() {
+        ReservationRound round = givenBuyerRound(
+                ReservationRoundStatus.OPEN
+        );
+
+        givenBuyerCancellation(ROUND_ID, 1);
+
+        when(reservationMapper.countActiveByRoundId(
+                ROUND_ID
+        )).thenReturn(2);
+
+        service.cancelBuyerReservations(BUYER_ID);
+
+        verify(drawService).compactQueue(round);
+
+        verify(drawService, never())
+                .drawAfterPriority(any(), any());
+
+        verify(drawService, never())
+                .redrawAfterNewReservation(
+                        any(),
+                        anyLong(),
+                        any()
+                );
+    }
+
+    @Test
+    void missedFirstDrawRunsBeforeBuyerBanCancellation() {
+        ReservationRound round = givenBuyerRound(
+                ReservationRoundStatus.OPEN
+        );
+
+        round.setPriorityEndsAt(
+                NOW.minusMinutes(1)
+        );
+
+        givenBuyerCancellation(ROUND_ID, 1);
+
+        when(reservationMapper.countActiveByRoundId(
+                ROUND_ID
+        )).thenReturn(2);
+
+        when(drawService.drawAfterPriority(
+                round,
+                NOW
+        )).thenAnswer(invocation -> {
+            round.setDrawVersion(1);
+            round.setVersion(1);
+            return true;
+        });
+
+        service.cancelBuyerReservations(BUYER_ID);
+
+        var order = inOrder(
+                reservationMapper,
+                drawService,
+                jdbcTemplate
+        );
+
+        order.verify(reservationMapper)
+                .findByRoundAndBuyerForUpdate(
+                        ROUND_ID,
+                        BUYER_ID
+                );
+
+        order.verify(drawService)
+                .drawAfterPriority(round, NOW);
+
+        order.verify(jdbcTemplate).update(
+                contains("UPDATE product_reservations"),
+                eq(NOW),
+                eq(ROUND_ID),
+                eq(BUYER_ID)
+        );
+
+        order.verify(drawService)
+                .compactQueue(round);
+
+        assertEquals(1, round.getDrawVersion());
+    }
+
+    @Test
+    void buyerBanAfterDrawPreservesDrawVersion() {
+        ReservationRound round = givenBuyerRound(
+                ReservationRoundStatus.OPEN
+        );
+
+        round.setPriorityEndsAt(
+                NOW.minusMinutes(5)
+        );
+
+        round.setDrawVersion(3);
+
+        givenBuyerCancellation(ROUND_ID, 1);
+
+        when(reservationMapper.countActiveByRoundId(
+                ROUND_ID
+        )).thenReturn(2);
+
+        service.cancelBuyerReservations(BUYER_ID);
+
+        verify(drawService).compactQueue(round);
+
+        verify(drawService, never())
+                .drawAfterPriority(any(), any());
+
+        verify(drawService, never())
+                .redrawAfterNewReservation(
+                        any(),
+                        anyLong(),
+                        any()
+                );
+
+        assertEquals(3, round.getDrawVersion());
+    }
+
+    @Test
+    void buyerBanCompactsFrozenQueue() {
+        ReservationRound round = givenBuyerRound(
+                ReservationRoundStatus.FROZEN
+        );
+
+        round.setDrawVersion(2);
+
+        givenBuyerCancellation(ROUND_ID, 1);
+
+        when(reservationMapper.countActiveByRoundId(
+                ROUND_ID
+        )).thenReturn(2);
+
+        service.cancelBuyerReservations(BUYER_ID);
+
+        verify(drawService).compactQueue(round);
+
+        verify(drawService, never())
+                .drawAfterPriority(any(), any());
+
+        verify(drawService, never())
+                .redrawAfterNewReservation(
+                        any(),
+                        anyLong(),
+                        any()
+                );
+
+        assertEquals(2, round.getDrawVersion());
+    }
+
+    @Test
+    void failedFirstDrawPreventsBuyerCancellation() {
+        ReservationRound round = givenBuyerRound(
+                ReservationRoundStatus.OPEN
+        );
+
+        round.setPriorityEndsAt(
+                NOW.minusMinutes(1)
+        );
+
+        when(drawService.drawAfterPriority(
+                round,
+                NOW
+        )).thenReturn(false);
+
+        assertThrows(
+                ProductConflictException.class,
+                () -> service.cancelBuyerReservations(
+                        BUYER_ID
+                )
+        );
+
+        verify(jdbcTemplate, never()).update(
+                contains("UPDATE product_reservations"),
+                eq(NOW),
+                eq(ROUND_ID),
+                eq(BUYER_ID)
+        );
+
+        verify(drawService, never())
+                .compactQueue(any());
+    }
+
+    @Test
+    void queueCompactionFailurePropagatesToCaller() {
+        ReservationRound round = givenBuyerRound(
+                ReservationRoundStatus.OPEN
+        );
+
+        round.setDrawVersion(1);
+
+        givenBuyerCancellation(ROUND_ID, 1);
+
+        when(reservationMapper.countActiveByRoundId(
+                ROUND_ID
+        )).thenReturn(2);
+
+        doThrow(
+                new ProductConflictException(
+                        "候补队列更新失败"
+                )
+        ).when(drawService).compactQueue(round);
+
+        assertThrows(
+                ProductConflictException.class,
+                () -> service.cancelBuyerReservations(
+                        BUYER_ID
+                )
+        );
+
+        verify(drawService).compactQueue(round);
     }
 }

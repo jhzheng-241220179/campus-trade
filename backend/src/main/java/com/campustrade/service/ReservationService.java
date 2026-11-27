@@ -29,16 +29,12 @@ import java.util.List;
 public class ReservationService {
 
     private final ProductMapper productMapper;
-
     private final ReservationRoundMapper roundMapper;
-
     private final ProductReservationMapper reservationMapper;
-
     private final JdbcTemplate jdbcTemplate;
-
     private final ReservationProperties properties;
-
     private final Clock clock;
+    private final ReservationDrawService drawService;
 
     public ReservationService(
             ProductMapper productMapper,
@@ -46,7 +42,8 @@ public class ReservationService {
             ProductReservationMapper reservationMapper,
             JdbcTemplate jdbcTemplate,
             ReservationProperties properties,
-            Clock clock
+            Clock clock,
+            ReservationDrawService drawService
     ) {
         this.productMapper = productMapper;
         this.roundMapper = roundMapper;
@@ -54,6 +51,7 @@ public class ReservationService {
         this.jdbcTemplate = jdbcTemplate;
         this.properties = properties;
         this.clock = clock;
+        this.drawService = drawService;
     }
 
     // =================================================
@@ -66,9 +64,7 @@ public class ReservationService {
             Long buyerId
     ) {
         Product product = lockTradeParticipants(
-                productId,
-                buyerId,
-                true
+                productId, buyerId, true
         );
 
         if (!"PUBLISHED".equals(product.getStatus())) {
@@ -77,33 +73,21 @@ public class ReservationService {
             );
         }
 
+        ReservationRound round =
+                roundMapper.findActiveByProductIdForUpdate(productId);
+
         LocalDateTime now = now();
 
-        ReservationRound round =
-                roundMapper.findActiveByProductIdForUpdate(
-                        productId
-                );
-
-        // 已有预约轮次时，优先检查重复预约。
         if (round != null) {
             ProductReservation existing =
                     reservationMapper.findByRoundAndBuyer(
-                            round.getId(),
-                            buyerId
+                            round.getId(), buyerId
                     );
 
             if (existing != null) {
-                // 重复提交同一预约请求时，
-                // 直接返回现有有效预约。
-                if (existing.getStatus()
-                        == ReservationStatus.ACTIVE) {
-
+                if (existing.getStatus() == ReservationStatus.ACTIVE) {
                     return buildResponse(
-                            product,
-                            round,
-                            existing,
-                            buyerId,
-                            now
+                            product, round, existing, buyerId, now
                     );
                 }
 
@@ -116,22 +100,19 @@ public class ReservationService {
         }
 
         checkBuyerReservationLimit(buyerId);
+        checkCancellationCooldown(productId, buyerId, now);
 
-        checkCancellationCooldown(
-                productId,
-                buyerId,
-                now
-        );
-
-        // 首位买家创建预约轮次。
         if (round == null) {
             round = createRound(productId, now);
+        } else {
+            ensureFirstDraw(round, now);
         }
 
-        int nextOrder =
+        int nextOrder = Math.incrementExact(
                 reservationMapper.findMaxReservationOrder(
                         round.getId()
-                ) + 1;
+                )
+        );
 
         ProductReservation reservation =
                 new ProductReservation();
@@ -143,9 +124,7 @@ public class ReservationService {
         reservation.setVersion(0);
         reservation.setCreatedAt(now);
 
-        int rows = reservationMapper.insert(
-                reservation
-        );
+        int rows = reservationMapper.insert(reservation);
 
         if (rows != 1 || reservation.getId() == null) {
             throw new IllegalStateException(
@@ -153,12 +132,27 @@ public class ReservationService {
             );
         }
 
+        if (now.isBefore(round.getPriorityEndsAt())) {
+            drawService.initializePriorityQueue(round, now);
+        } else {
+            drawService.redrawAfterNewReservation(
+                    round,
+                    reservation.getId(),
+                    now
+            );
+        }
+
+        ProductReservation latest =
+                reservationMapper.findById(reservation.getId());
+
+        if (latest == null || latest.getQueuePosition() == null) {
+            throw new IllegalStateException(
+                    "未能获取最新候补排名"
+            );
+        }
+
         return buildResponse(
-                product,
-                round,
-                reservation,
-                buyerId,
-                now
+                product, round, latest, buyerId, now
         );
     }
 
@@ -169,80 +163,83 @@ public class ReservationService {
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public ReservationResponse cancel(
             Long productId,
-            Long buyerId
+            Long buyerId,
+            Long reservationId
     ) {
-        // 取消预约时不要求卖家仍处于 ACTIVE，
-        // 避免卖家状态异常时买家无法主动退出。
+        if (reservationId == null || reservationId <= 0) {
+            throw new IllegalArgumentException(
+                    "预约ID必须大于0"
+            );
+        }
+
         Product product = lockTradeParticipants(
-                productId,
-                buyerId,
-                false
+                productId, buyerId, false
         );
+
+        ReservationRound round =
+                roundMapper.findActiveByProductIdForUpdate(productId);
 
         LocalDateTime now = now();
 
-        ReservationRound round =
-                roundMapper.findActiveByProductIdForUpdate(
-                        productId
-                );
-
         if (round == null) {
-            return buildResponse(
-                    product,
-                    null,
-                    null,
-                    buyerId,
-                    now
+            throw new ProductConflictException(
+                    "当前预约轮次已结束，请刷新页面"
             );
         }
 
         ProductReservation reservation =
-                reservationMapper
-                        .findByRoundAndBuyerForUpdate(
-                                round.getId(),
-                                buyerId
-                        );
+                reservationMapper.findByRoundAndBuyerForUpdate(
+                        round.getId(), buyerId
+                );
 
-        if (reservation == null) {
-            throw new ProductConflictException(
-                    "你尚未预约该商品"
-            );
-        }
+        // 只允许操作当前登录买家自己的指定预约。
+        requireMatchingReservation(
+                reservation, reservationId
+        );
 
-        // 重复取消请求不重复修改数据库。
-        if (reservation.getStatus()
-                == ReservationStatus.CANCELLED) {
-
+        // 必须先校验预约ID，再判断是否属于幂等请求。
+        if (reservation.getStatus() == ReservationStatus.CANCELLED) {
             return buildResponse(
-                    product,
-                    round,
-                    reservation,
-                    buyerId,
-                    now
+                    product, round, reservation, buyerId, now
             );
         }
 
-        if (round.getStatus()
-                == ReservationRoundStatus.MATCHING) {
+        if (round.getStatus() == ReservationRoundStatus.MATCHING) {
             throw new ProductConflictException(
                     "当前轮次已进入交易匹配阶段"
             );
         }
 
-        if (reservation.getStatus()
-                != ReservationStatus.ACTIVE) {
-
+        if (reservation.getStatus() != ReservationStatus.ACTIVE) {
             throw new ProductConflictException(
                     "当前预约状态不允许取消"
             );
         }
 
-        if (!now.isBefore(
-                round.getSellerResponseDeadline()
-        )) {
+        if (!now.isBefore(round.getSellerResponseDeadline())) {
             throw new ProductConflictException(
                     "本轮预约已超过卖家响应期限"
             );
+        }
+
+        // 如果首次抽签已经到期但尚未执行，
+        // 先补做抽签，再重新读取预约版本。
+        if (ensureFirstDraw(round, now)) {
+
+            reservation =
+                    reservationMapper.findByRoundAndBuyerForUpdate(
+                            round.getId(), buyerId
+                    );
+
+            requireMatchingReservation(
+                    reservation, reservationId
+            );
+
+            if (reservation.getStatus() != ReservationStatus.ACTIVE) {
+                throw new ProductConflictException(
+                        "预约记录状态已发生变化"
+                );
+            }
         }
 
         int rows = reservationMapper.cancelByBuyer(
@@ -258,21 +255,20 @@ public class ReservationService {
             );
         }
 
-        reservation.setStatus(
-                ReservationStatus.CANCELLED
-        );
-
+        reservation.setStatus(ReservationStatus.CANCELLED);
         reservation.setCancelledAt(now);
         reservation.setCancelReason("BUYER_CANCELLED");
         reservation.setQueuePosition(null);
 
-        int remaining =
-                reservationMapper.countActiveByRoundId(
-                        round.getId()
-                );
+        reservation.setVersion(
+                Math.incrementExact(reservation.getVersion())
+        );
 
-        // 所有买家退出，结束本轮预约。
+        int remaining =
+                reservationMapper.countActiveByRoundId(round.getId());
+
         if (remaining == 0) {
+
             int updated = roundMapper.cancel(
                     round.getId(),
                     "NO_ACTIVE_BUYERS",
@@ -286,21 +282,35 @@ public class ReservationService {
                 );
             }
 
-            round.setStatus(
-                    ReservationRoundStatus.CANCELLED
-            );
-
+            round.setStatus(ReservationRoundStatus.CANCELLED);
             round.setClosedAt(now);
             round.setCloseReason("NO_ACTIVE_BUYERS");
+
+            round.setVersion(
+                    Math.incrementExact(round.getVersion())
+            );
+
+        } else {
+            drawService.compactQueue(round);
         }
 
         return buildResponse(
-                product,
-                round,
-                reservation,
-                buyerId,
-                now
+                product, round, reservation, buyerId, now
         );
+    }
+
+    // 校验当前预约是否与客户端指定的预约一致。
+    private void requireMatchingReservation(
+            ProductReservation reservation,
+            Long reservationId
+    ) {
+        if (reservation == null
+                || !reservationId.equals(reservation.getId())) {
+
+            throw new ProductConflictException(
+                    "预约记录已变化，请刷新后重试"
+            );
+        }
     }
 
     // =================================================
@@ -309,52 +319,78 @@ public class ReservationService {
 
     @Transactional(
             readOnly = true,
-            isolation = Isolation.READ_COMMITTED
+            isolation = Isolation.REPEATABLE_READ
     )
     public ReservationResponse getReservation(
             Long productId,
             Long buyerId
     ) {
-        Product product =
-                productMapper.findById(productId);
-
-        if (product == null) {
-            throw new ProductNotFoundException(
-                    productId
-            );
+        if (buyerId == null) {
+            throw new AccessDeniedException("请先登录");
         }
 
-        // 非公开商品的预约信息暂不允许外部用户查询。
+        Product product = productMapper.findById(productId);
+
+        if (product == null) {
+            throw new ProductNotFoundException(productId);
+        }
+
         if (!"PUBLISHED".equals(product.getStatus())
                 && !buyerId.equals(product.getSellerId())) {
 
-            throw new ProductNotFoundException(
-                    productId
-            );
+            throw new ProductNotFoundException(productId);
         }
 
         ReservationRound round =
-                roundMapper.findActiveByProductId(
-                        productId
-                );
+                roundMapper.findActiveByProductId(productId);
 
         ProductReservation reservation = null;
 
         if (round != null) {
             reservation =
                     reservationMapper.findByRoundAndBuyer(
-                            round.getId(),
-                            buyerId
+                            round.getId(), buyerId
                     );
         }
 
         return buildResponse(
-                product,
-                round,
-                reservation,
-                buyerId,
-                now()
+                product, round, reservation, buyerId, now()
         );
+    }
+
+    // =================================================
+    // 补偿执行首次抽签
+    // =================================================
+
+    private boolean ensureFirstDraw(
+            ReservationRound round,
+            LocalDateTime now
+    ) {
+        if (round.getStatus() != ReservationRoundStatus.OPEN) {
+            return false;
+        }
+
+        if (round.getDrawVersion() != 0) {
+            return false;
+        }
+
+        if (now.isBefore(round.getPriorityEndsAt())) {
+            return false;
+        }
+
+        if (!now.isBefore(round.getSellerResponseDeadline())) {
+            return false;
+        }
+
+        boolean drawn = drawService.drawAfterPriority(round, now);
+
+        if (!drawn) {
+            throw new ProductConflictException(
+                    "首次随机抽签未能完成"
+            );
+        }
+
+        return true;
     }
 
     // =================================================
@@ -365,27 +401,18 @@ public class ReservationService {
             Long productId,
             LocalDateTime now
     ) {
-        ReservationRound round =
-                new ReservationRound();
+        ReservationRound round = new ReservationRound();
 
         round.setProductId(productId);
-
-        round.setStatus(
-                ReservationRoundStatus.OPEN
-        );
-
+        round.setStatus(ReservationRoundStatus.OPEN);
         round.setFirstReservedAt(now);
 
         round.setPriorityEndsAt(
-                now.plus(
-                        properties.getPriorityWindow()
-                )
+                now.plus(properties.getPriorityWindow())
         );
 
         round.setCoolingEndsAt(
-                now.plus(
-                        properties.getCoolingPeriod()
-                )
+                now.plus(properties.getCoolingPeriod())
         );
 
         round.setSellerResponseDeadline(
@@ -418,18 +445,13 @@ public class ReservationService {
             boolean requireActiveSeller
     ) {
         if (buyerId == null) {
-            throw new AccessDeniedException(
-                    "请先登录"
-            );
+            throw new AccessDeniedException("请先登录");
         }
 
-        Product snapshot =
-                productMapper.findById(productId);
+        Product snapshot = productMapper.findById(productId);
 
         if (snapshot == null) {
-            throw new ProductNotFoundException(
-                    productId
-            );
+            throw new ProductNotFoundException(productId);
         }
 
         Long sellerId = snapshot.getSellerId();
@@ -440,33 +462,19 @@ public class ReservationService {
             );
         }
 
-        Long first = Math.min(
-                buyerId,
-                sellerId
-        );
+        Long first = Math.min(buyerId, sellerId);
+        Long second = Math.max(buyerId, sellerId);
 
-        Long second = Math.max(
-                buyerId,
-                sellerId
-        );
-
-        // 分别锁定两条账户记录，
-        // 明确保证按照用户 ID 升序加锁。
-        AccountState firstAccount =
-                lockAccount(first);
-
-        AccountState secondAccount =
-                lockAccount(second);
+        AccountState firstAccount = lockAccount(first);
+        AccountState secondAccount = lockAccount(second);
 
         AccountState buyer =
                 buyerId.equals(first)
-                        ? firstAccount
-                        : secondAccount;
+                        ? firstAccount : secondAccount;
 
         AccountState seller =
                 sellerId.equals(first)
-                        ? firstAccount
-                        : secondAccount;
+                        ? firstAccount : secondAccount;
 
         requireActiveAccount(
                 buyer,
@@ -480,21 +488,14 @@ public class ReservationService {
             );
         }
 
-        // 账户锁获取完成后，再锁定商品。
         Product product =
-                productMapper.findByIdForUpdate(
-                        productId
-                );
+                productMapper.findByIdForUpdate(productId);
 
         if (product == null) {
-            throw new ProductNotFoundException(
-                    productId
-            );
+            throw new ProductNotFoundException(productId);
         }
 
-        if (!sellerId.equals(
-                product.getSellerId()
-        )) {
+        if (!sellerId.equals(product.getSellerId())) {
             throw new ProductConflictException(
                     "商品所属用户已发生变化"
             );
@@ -503,9 +504,7 @@ public class ReservationService {
         return product;
     }
 
-    private AccountState lockAccount(
-            Long userId
-    ) {
+    private AccountState lockAccount(Long userId) {
         List<AccountState> accounts =
                 jdbcTemplate.query(
                         """
@@ -514,15 +513,10 @@ public class ReservationService {
                         WHERE id = ?
                         FOR UPDATE
                         """,
-                        (rs, rowNum) ->
-                                new AccountState(
-                                        rs.getString(
-                                                "status"
-                                        ),
-                                        rs.getBoolean(
-                                                "email_verified"
-                                        )
-                                ),
+                        (rs, rowNum) -> new AccountState(
+                                rs.getString("status"),
+                                rs.getBoolean("email_verified")
+                        ),
                         userId
                 );
 
@@ -542,9 +536,7 @@ public class ReservationService {
         if (!"ACTIVE".equals(account.status())
                 || !account.emailVerified()) {
 
-            throw new AccessDeniedException(
-                    message
-            );
+            throw new AccessDeniedException(message);
         }
     }
 
@@ -562,34 +554,24 @@ public class ReservationService {
             ReservationRound round,
             LocalDateTime now
     ) {
-        if (round.getStatus()
-                != ReservationRoundStatus.OPEN) {
-
+        if (round.getStatus() != ReservationRoundStatus.OPEN) {
             throw new ProductConflictException(
                     "当前预约轮次已停止接受新预约"
             );
         }
 
-        if (!now.isBefore(
-                round.getCoolingEndsAt()
-        )) {
+        if (!now.isBefore(round.getCoolingEndsAt())) {
             throw new ProductConflictException(
                     "预约冷静期已结束"
             );
         }
     }
 
-    private void checkBuyerReservationLimit(
-            Long buyerId
-    ) {
+    private void checkBuyerReservationLimit(Long buyerId) {
         int count =
-                reservationMapper.countActiveByBuyerId(
-                        buyerId
-                );
+                reservationMapper.countActiveByBuyerId(buyerId);
 
-        if (count >= properties
-                .getMaxActiveReservations()) {
-
+        if (count >= properties.getMaxActiveReservations()) {
             throw new ProductConflictException(
                     "同时参与的预约数量已达到上限"
             );
@@ -601,11 +583,7 @@ public class ReservationService {
             Long buyerId,
             LocalDateTime now
     ) {
-        if (isInCancellationCooldown(
-                productId,
-                buyerId,
-                now
-        )) {
+        if (isInCancellationCooldown(productId, buyerId, now)) {
             throw new ProductConflictException(
                     "取消预约后暂时不能再次预约该商品"
             );
@@ -618,17 +596,14 @@ public class ReservationService {
             LocalDateTime now
     ) {
         LocalDateTime cancelledAt =
-                reservationMapper
-                        .findLatestBuyerCancellation(
-                                productId,
-                                buyerId
-                        );
+                reservationMapper.findLatestBuyerCancellation(
+                        productId, buyerId
+                );
 
         return cancelledAt != null
                 && now.isBefore(
                         cancelledAt.plus(
-                                properties
-                                        .getBuyerCancelCooldown()
+                                properties.getBuyerCancelCooldown()
                         )
                 );
     }
@@ -645,25 +620,17 @@ public class ReservationService {
             LocalDateTime now
     ) {
         boolean published =
-                "PUBLISHED".equals(
-                        product.getStatus()
-                );
+                "PUBLISHED".equals(product.getStatus());
 
         boolean isSeller =
-                buyerId.equals(
-                        product.getSellerId()
-                );
+                buyerId.equals(product.getSellerId());
 
         boolean roundOpen =
                 round == null
-                        || (
-                            round.getStatus()
-                                == ReservationRoundStatus.OPEN
-
-                            && now.isBefore(
-                                round.getCoolingEndsAt()
-                            )
-                        );
+                || (
+                    round.getStatus() == ReservationRoundStatus.OPEN
+                    && now.isBefore(round.getCoolingEndsAt())
+                );
 
         boolean canReserve =
                 published
@@ -673,35 +640,23 @@ public class ReservationService {
 
         if (canReserve) {
             canReserve =
-                    reservationMapper
-                            .countActiveByBuyerId(buyerId)
-                            < properties
-                                .getMaxActiveReservations()
+                    reservationMapper.countActiveByBuyerId(buyerId)
+                            < properties.getMaxActiveReservations()
 
                     && !isInCancellationCooldown(
-                            product.getId(),
-                            buyerId,
-                            now
+                            product.getId(), buyerId, now
                     );
         }
 
         boolean canCancel =
                 round != null
                 && reservation != null
-                && reservation.getStatus()
-                    == ReservationStatus.ACTIVE
-
+                && reservation.getStatus() == ReservationStatus.ACTIVE
                 && (
-                    round.getStatus()
-                        == ReservationRoundStatus.OPEN
-
-                    || round.getStatus()
-                        == ReservationRoundStatus.FROZEN
+                    round.getStatus() == ReservationRoundStatus.OPEN
+                    || round.getStatus() == ReservationRoundStatus.FROZEN
                 )
-
-                && now.isBefore(
-                    round.getSellerResponseDeadline()
-                );
+                && now.isBefore(round.getSellerResponseDeadline());
 
         if (round == null) {
             return new ReservationResponse(
@@ -719,29 +674,20 @@ public class ReservationService {
                     null,
                     canReserve,
                     false,
-                    now
+                    now,
+                    null
             );
         }
 
         int activeCount =
-                reservationMapper
-                        .countActiveByRoundId(
-                                round.getId()
-                        );
+                reservationMapper.countActiveByRoundId(round.getId());
 
-        ReservationRoundStatus visibleStatus =
-                round.getStatus();
+        ReservationRoundStatus visibleStatus = round.getStatus();
 
-        // 定时冻结任务尚未实现。
-        // 查询时根据截止时间展示有效阶段，
-        // 不允许超过冷静期的轮次继续接受预约。
         if (visibleStatus == ReservationRoundStatus.OPEN
-                && !now.isBefore(
-                        round.getCoolingEndsAt()
-                )) {
+                && !now.isBefore(round.getCoolingEndsAt())) {
 
-            visibleStatus =
-                    ReservationRoundStatus.FROZEN;
+            visibleStatus = ReservationRoundStatus.FROZEN;
         }
 
         return new ReservationResponse(
@@ -755,24 +701,21 @@ public class ReservationService {
                 activeCount,
 
                 reservation == null
-                        ? null
-                        : reservation.getId(),
+                        ? null : reservation.getId(),
 
                 reservation == null
-                        ? null
-                        : reservation.getStatus(),
+                        ? null : reservation.getStatus(),
 
                 reservation == null
-                        ? null
-                        : reservation.getReservationOrder(),
+                        ? null : reservation.getReservationOrder(),
 
                 reservation == null
-                        ? null
-                        : reservation.getQueuePosition(),
+                        ? null : reservation.getQueuePosition(),
 
                 canReserve,
                 canCancel,
-                now
+                now,
+                round.getDrawVersion()
         );
     }
 

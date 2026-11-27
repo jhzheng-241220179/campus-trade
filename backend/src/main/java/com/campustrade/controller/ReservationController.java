@@ -59,15 +59,23 @@ public class ReservationController {
     @DeleteMapping("/mine")
     public ApiResponse<ReservationResponse> cancel(
             @PathVariable Long productId,
+            @RequestParam("reservationId") Long reservationId,
             Authentication authentication
     ) {
+        if (reservationId <= 0) {
+            throw new IllegalArgumentException(
+                    "预约ID必须大于0"
+            );
+        }
+
         Long buyerId = currentUserIdResolver
                 .requireCurrentUserId(authentication);
 
         return ApiResponse.success(
                 reservationService.cancel(
                         productId,
-                        buyerId
+                        buyerId,
+                        reservationId
                 )
         );
     }

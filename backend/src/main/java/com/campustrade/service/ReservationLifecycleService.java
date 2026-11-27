@@ -24,21 +24,26 @@ public class ReservationLifecycleService {
     private final ProductReservationMapper reservationMapper;
     private final JdbcTemplate jdbcTemplate;
     private final Clock clock;
+    private final ReservationDrawService drawService;
 
     public ReservationLifecycleService(
             ReservationRoundMapper roundMapper,
             ProductReservationMapper reservationMapper,
             JdbcTemplate jdbcTemplate,
-            Clock clock
+            Clock clock,
+            ReservationDrawService drawService
     ) {
         this.roundMapper = roundMapper;
         this.reservationMapper = reservationMapper;
         this.jdbcTemplate = jdbcTemplate;
         this.clock = clock;
+        this.drawService = drawService;
     }
 
-    // 卖家主动下架前检查。
-    // 调用方必须已锁定卖家账户。
+    // =================================================
+    // 卖家主动下架前检查
+    // =================================================
+
     @Transactional(propagation = Propagation.MANDATORY)
     public void requireNoActiveRound(Long productId) {
         ReservationRound round =
@@ -53,8 +58,10 @@ public class ReservationLifecycleService {
         }
     }
 
-    // 管理员强制下架商品时调用。
-    // 调用方必须已锁定卖家账户及商品。
+    // =================================================
+    // 管理员强制下架商品
+    // =================================================
+
     @Transactional(propagation = Propagation.MANDATORY)
     public void cancelProductReservations(
             Long productId,
@@ -72,7 +79,10 @@ public class ReservationLifecycleService {
         cancelRound(round, reason, now());
     }
 
-    // 封禁卖家时，取消其所有商品的预约。
+    // =================================================
+    // 封禁卖家：取消其全部商品预约
+    // =================================================
+
     @Transactional(propagation = Propagation.MANDATORY)
     public void cancelSellerReservations(Long sellerId) {
         List<Long> productIds = jdbcTemplate.query(
@@ -95,8 +105,10 @@ public class ReservationLifecycleService {
         }
     }
 
-    // 封禁买家时，只取消其个人预约，
-    // 不影响其他买家的预约资格。
+    // =================================================
+    // 封禁买家：取消个人预约并调整候补队列
+    // =================================================
+
     @Transactional(propagation = Propagation.MANDATORY)
     public void cancelBuyerReservations(Long buyerId) {
         List<Long> roundIds = jdbcTemplate.query(
@@ -114,11 +126,13 @@ public class ReservationLifecycleService {
                 buyerId
         );
 
-        LocalDateTime now = now();
-
         for (Long roundId : roundIds) {
+
+            // 锁定轮次后重新检查状态。
             ReservationRound round =
-                    roundMapper.findByIdForUpdate(roundId);
+                    roundMapper.findByIdForUpdate(
+                            roundId
+                    );
 
             if (round == null) {
                 continue;
@@ -131,6 +145,29 @@ public class ReservationLifecycleService {
                 continue;
             }
 
+            // 获得轮次锁之后再获取时间。
+            LocalDateTime now = now();
+
+            // 确认目标买家仍具有有效预约。
+            var reservation =
+                    reservationMapper
+                            .findByRoundAndBuyerForUpdate(
+                                    roundId,
+                                    buyerId
+                            );
+
+            if (reservation == null
+                    || reservation.getStatus()
+                        != com.campustrade.model
+                            .ReservationStatus.ACTIVE) {
+                continue;
+            }
+
+            // 若首次抽签已经到期但尚未执行，
+            // 先补做首次抽签。
+            ensureFirstDraw(round, now);
+
+            // 取消目标买家的预约资格。
             int rows = jdbcTemplate.update(
                     """
                     UPDATE product_reservations
@@ -148,8 +185,10 @@ public class ReservationLifecycleService {
                     buyerId
             );
 
-            if (rows == 0) {
-                continue;
+            if (rows != 1) {
+                throw new ProductConflictException(
+                        "买家预约状态已发生变化"
+                );
             }
 
             int remaining =
@@ -158,21 +197,83 @@ public class ReservationLifecycleService {
                     );
 
             if (remaining == 0) {
-                int updated = roundMapper.cancel(
-                        roundId,
-                        "NO_ACTIVE_BUYERS",
-                        now,
-                        round.getVersion()
-                );
 
-                if (updated != 1) {
-                    throw new ProductConflictException(
-                            "预约轮次状态发生变化"
-                    );
-                }
+                // 最后一位有效买家退出，关闭轮次。
+                closeEmptyRound(round, now);
+
+            } else {
+
+                // 保持其他买家的相对排名，
+                // 不触发新的随机抽签。
+                drawService.compactQueue(round);
             }
         }
     }
+
+    // =================================================
+    // 补偿首次随机抽签
+    // =================================================
+
+    private void ensureFirstDraw(
+            ReservationRound round,
+            LocalDateTime now
+    ) {
+        if (round.getStatus()
+                != ReservationRoundStatus.OPEN) {
+            return;
+        }
+
+        if (round.getDrawVersion() != 0) {
+            return;
+        }
+
+        if (now.isBefore(round.getPriorityEndsAt())) {
+            return;
+        }
+
+        if (!now.isBefore(
+                round.getSellerResponseDeadline()
+        )) {
+            return;
+        }
+
+        boolean drawn = drawService.drawAfterPriority(
+                round,
+                now
+        );
+
+        if (!drawn) {
+            throw new ProductConflictException(
+                    "首次随机抽签未能完成"
+            );
+        }
+    }
+
+    // =================================================
+    // 关闭没有有效买家的预约轮次
+    // =================================================
+
+    private void closeEmptyRound(
+            ReservationRound round,
+            LocalDateTime now
+    ) {
+        int updated = roundMapper.cancel(
+                round.getId(),
+                "NO_ACTIVE_BUYERS",
+                now,
+                round.getVersion()
+        );
+
+        if (updated != 1) {
+            throw new ProductConflictException(
+                    "预约轮次状态发生变化"
+            );
+        }
+    }
+
+    // =================================================
+    // 取消整个预约轮次
+    // =================================================
 
     private void cancelRound(
             ReservationRound round,

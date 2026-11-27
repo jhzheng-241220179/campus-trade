@@ -1,4 +1,3 @@
-
 package com.campustrade.dto;
 
 import com.campustrade.model.ReservationRoundStatus;
@@ -36,7 +35,9 @@ public record ReservationResponse(
 
         boolean canCancel,
 
-        LocalDateTime serverTime
+        LocalDateTime serverTime,
+
+        Integer drawVersion
 
 ) {
 }

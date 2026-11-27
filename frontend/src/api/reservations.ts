@@ -38,6 +38,8 @@ export interface ReservationResponse {
   canCancel: boolean
 
   serverTime: string
+
+  drawVersion: number | null
 }
 
 export async function getReservation(
@@ -64,10 +66,16 @@ export async function createReservation(
 
 export async function cancelReservation(
   productId: number,
+  reservationId: number,
 ): Promise<ReservationResponse> {
   const response =
     await api.delete<ApiResponse<ReservationResponse>>(
       `/products/${productId}/reservations/mine`,
+      {
+        params: {
+          reservationId,
+        },
+      },
     )
 
   return response.data.data

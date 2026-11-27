@@ -10,7 +10,6 @@ import com.campustrade.model.ReservationStatus;
 import com.campustrade.security.CurrentUserIdResolver;
 import com.campustrade.service.ReservationService;
 
-import org.apache.ibatis.annotations.Mapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -44,9 +43,9 @@ class ReservationControllerTest {
 
     private static final Long PRODUCT_ID = 10L;
     private static final Long BUYER_ID = 5L;
+    private static final Long RESERVATION_ID = 100L;
 
-    private static final String EMAIL =
-            "buyer@example.com";
+    private static final String EMAIL = "buyer@example.com";
 
     @Autowired
     private MockMvc mockMvc;
@@ -65,26 +64,19 @@ class ReservationControllerTest {
 
     @BeforeEach
     void setUp() {
-        // 模拟 AccountStatusFilter 查询有效账户。
         when(jdbcTemplate.query(
                 anyString(),
-                org.mockito.ArgumentMatchers
-                        .<RowMapper<Object>>any(),
+                org.mockito.ArgumentMatchers.<RowMapper<Object>>any(),
                 eq(EMAIL)
         )).thenAnswer(invocation -> {
-            RowMapper<?> mapper =
-                    invocation.getArgument(1);
+
+            RowMapper<?> mapper = invocation.getArgument(1);
 
             ResultSet rs = mock(ResultSet.class);
 
-            when(rs.getString("status"))
-                    .thenReturn("ACTIVE");
-
-            when(rs.getString("role"))
-                    .thenReturn("USER");
-
-            when(rs.getBoolean("email_verified"))
-                    .thenReturn(true);
+            when(rs.getString("status")).thenReturn("ACTIVE");
+            when(rs.getString("role")).thenReturn("USER");
+            when(rs.getBoolean("email_verified")).thenReturn(true);
 
             return List.of(mapper.mapRow(rs, 0));
         });
@@ -97,9 +89,8 @@ class ReservationControllerTest {
     private ReservationResponse response(
             ReservationStatus status
     ) {
-        LocalDateTime now = LocalDateTime.of(
-                2026, 11, 25, 14, 0
-        );
+        LocalDateTime now =
+                LocalDateTime.of(2026, 11, 27, 14, 0);
 
         boolean active =
                 status == ReservationStatus.ACTIVE;
@@ -113,13 +104,14 @@ class ReservationControllerTest {
                 now.plusMinutes(30),
                 now.plusMinutes(60),
                 active ? 1 : 0,
-                100L,
+                RESERVATION_ID,
                 status,
                 1,
-                null,
+                active ? 1 : null,
                 false,
                 active,
-                now
+                now,
+                2
         );
     }
 
@@ -127,9 +119,7 @@ class ReservationControllerTest {
     void anonymousCannotQueryReservation() throws Exception {
         mockMvc.perform(
                 get("/api/products/10/reservations/mine")
-        ).andExpect(
-                status().isUnauthorized()
-        );
+        ).andExpect(status().isUnauthorized());
 
         verifyNoInteractions(reservationService);
     }
@@ -139,9 +129,7 @@ class ReservationControllerTest {
         mockMvc.perform(
                 post("/api/products/10/reservations")
                         .with(csrf())
-        ).andExpect(
-                status().isUnauthorized()
-        );
+        ).andExpect(status().isUnauthorized());
 
         verifyNoInteractions(reservationService);
     }
@@ -151,23 +139,17 @@ class ReservationControllerTest {
         mockMvc.perform(
                 post("/api/products/10/reservations")
                         .with(user(EMAIL).roles("USER"))
-        ).andExpect(
-                status().isForbidden()
-        );
+        ).andExpect(status().isForbidden());
 
         verifyNoInteractions(reservationService);
     }
 
     @Test
-    void authenticatedUserCanCreateReservation()
-            throws Exception {
+    void authenticatedUserCanCreateReservation() throws Exception {
 
         when(reservationService.reserve(
-                PRODUCT_ID,
-                BUYER_ID
-        )).thenReturn(
-                response(ReservationStatus.ACTIVE)
-        );
+                PRODUCT_ID, BUYER_ID
+        )).thenReturn(response(ReservationStatus.ACTIVE));
 
         mockMvc.perform(
                 post("/api/products/10/reservations")
@@ -178,56 +160,42 @@ class ReservationControllerTest {
         .andExpect(jsonPath("$.code").value(200))
         .andExpect(jsonPath("$.data.productId").value(10))
         .andExpect(jsonPath("$.data.reservationId").value(100))
-        .andExpect(
-                jsonPath("$.data.reservationStatus")
-                        .value("ACTIVE")
-        );
+        .andExpect(jsonPath("$.data.reservationStatus").value("ACTIVE"));
 
-        verify(reservationService).reserve(
-                PRODUCT_ID,
-                BUYER_ID
-        );
+        verify(reservationService).reserve(PRODUCT_ID, BUYER_ID);
     }
 
     @Test
-    void authenticatedUserCanQueryReservation()
-            throws Exception {
+    void authenticatedUserCanQueryReservation() throws Exception {
 
         when(reservationService.getReservation(
-                PRODUCT_ID,
-                BUYER_ID
-        )).thenReturn(
-                response(ReservationStatus.ACTIVE)
-        );
+                PRODUCT_ID, BUYER_ID
+        )).thenReturn(response(ReservationStatus.ACTIVE));
 
         mockMvc.perform(
                 get("/api/products/10/reservations/mine")
                         .with(user(EMAIL).roles("USER"))
         )
         .andExpect(status().isOk())
-        .andExpect(
-                jsonPath("$.data.canCancel").value(true)
-        );
+        .andExpect(jsonPath("$.data.canCancel").value(true));
 
         verify(reservationService).getReservation(
-                PRODUCT_ID,
-                BUYER_ID
+                PRODUCT_ID, BUYER_ID
         );
     }
 
     @Test
-    void authenticatedUserCanCancelReservation()
-            throws Exception {
+    void authenticatedUserCanCancelReservation() throws Exception {
 
         when(reservationService.cancel(
                 PRODUCT_ID,
-                BUYER_ID
-        )).thenReturn(
-                response(ReservationStatus.CANCELLED)
-        );
+                BUYER_ID,
+                RESERVATION_ID
+        )).thenReturn(response(ReservationStatus.CANCELLED));
 
         mockMvc.perform(
                 delete("/api/products/10/reservations/mine")
+                        .param("reservationId", "100")
                         .with(user(EMAIL).roles("USER"))
                         .with(csrf())
         )
@@ -239,7 +207,8 @@ class ReservationControllerTest {
 
         verify(reservationService).cancel(
                 PRODUCT_ID,
-                BUYER_ID
+                BUYER_ID,
+                RESERVATION_ID
         );
     }
 
@@ -247,10 +216,9 @@ class ReservationControllerTest {
     void cancellationRequiresCsrf() throws Exception {
         mockMvc.perform(
                 delete("/api/products/10/reservations/mine")
+                        .param("reservationId", "100")
                         .with(user(EMAIL).roles("USER"))
-        ).andExpect(
-                status().isForbidden()
-        );
+        ).andExpect(status().isForbidden());
 
         verifyNoInteractions(reservationService);
     }
@@ -258,8 +226,7 @@ class ReservationControllerTest {
     @Test
     void businessConflictReturns409() throws Exception {
         when(reservationService.reserve(
-                PRODUCT_ID,
-                BUYER_ID
+                PRODUCT_ID, BUYER_ID
         )).thenThrow(
                 new ProductConflictException(
                         "不能预约自己发布的商品"
@@ -278,11 +245,8 @@ class ReservationControllerTest {
     @Test
     void missingProductReturns404() throws Exception {
         when(reservationService.getReservation(
-                PRODUCT_ID,
-                BUYER_ID
-        )).thenThrow(
-                new ProductNotFoundException(PRODUCT_ID)
-        );
+                PRODUCT_ID, BUYER_ID
+        )).thenThrow(new ProductNotFoundException(PRODUCT_ID));
 
         mockMvc.perform(
                 get("/api/products/10/reservations/mine")
@@ -295,8 +259,7 @@ class ReservationControllerTest {
     @Test
     void businessAccessDeniedReturns403() throws Exception {
         when(reservationService.reserve(
-                PRODUCT_ID,
-                BUYER_ID
+                PRODUCT_ID, BUYER_ID
         )).thenThrow(
                 new AccessDeniedException(
                         "当前账户无法进行预约操作"
@@ -310,5 +273,100 @@ class ReservationControllerTest {
         )
         .andExpect(status().isForbidden())
         .andExpect(jsonPath("$.code").value(403));
+    }
+
+    // =================================================
+    // Day 26 新增测试
+    // =================================================
+
+    @Test
+    void cancellationWithoutReservationIdReturns400()
+            throws Exception {
+
+        mockMvc.perform(
+                delete("/api/products/10/reservations/mine")
+                        .with(user(EMAIL).roles("USER"))
+                        .with(csrf())
+        )
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.code").value(400));
+
+        verifyNoInteractions(reservationService);
+    }
+
+    @Test
+    void invalidReservationIdFormatReturns400()
+            throws Exception {
+
+        mockMvc.perform(
+                delete("/api/products/10/reservations/mine")
+                        .param("reservationId", "abc")
+                        .with(user(EMAIL).roles("USER"))
+                        .with(csrf())
+        )
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.code").value(400));
+
+        verifyNoInteractions(reservationService);
+    }
+
+    @Test
+    void nonPositiveReservationIdReturns400()
+            throws Exception {
+
+        mockMvc.perform(
+                delete("/api/products/10/reservations/mine")
+                        .param("reservationId", "0")
+                        .with(user(EMAIL).roles("USER"))
+                        .with(csrf())
+        )
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.code").value(400));
+
+        verifyNoInteractions(reservationService);
+    }
+
+    @Test
+    void staleCancellationReturns409() throws Exception {
+
+        when(reservationService.cancel(
+                PRODUCT_ID,
+                BUYER_ID,
+                99L
+        )).thenThrow(
+                new ProductConflictException(
+                        "预约记录已变化，请刷新后重试"
+                )
+        );
+
+        mockMvc.perform(
+                delete("/api/products/10/reservations/mine")
+                        .param("reservationId", "99")
+                        .with(user(EMAIL).roles("USER"))
+                        .with(csrf())
+        )
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value(409));
+
+        verify(reservationService).cancel(
+                PRODUCT_ID, BUYER_ID, 99L
+        );
+    }
+
+    @Test
+    void reservationResponseIncludesDrawVersionAndQueuePosition()
+            throws Exception {
+
+        when(reservationService.getReservation(
+                PRODUCT_ID, BUYER_ID
+        )).thenReturn(response(ReservationStatus.ACTIVE));
+
+        mockMvc.perform(
+                get("/api/products/10/reservations/mine")
+                        .with(user(EMAIL).roles("USER"))
+        )
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.drawVersion").value(2))
+        .andExpect(jsonPath("$.data.queuePosition").value(1));
     }
 }

@@ -8,9 +8,11 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
@@ -24,6 +26,32 @@ public class GlobalExceptionHandler {
         return ResponseEntity
                 .badRequest()
                 .body(ApiResponse.error(400, ex.getMessage()));
+    }
+
+    // 缺少必填请求参数。
+    @ExceptionHandler(MissingServletRequestParameterException.class)
+    public ResponseEntity<ApiResponse<Void>> handleMissingParameter(
+            MissingServletRequestParameterException ex
+    ) {
+        String message =
+                "缺少必填参数：" + ex.getParameterName();
+
+        return ResponseEntity
+                .badRequest()
+                .body(ApiResponse.error(400, message));
+    }
+
+    // 请求参数无法转换为指定的Java类型。
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<ApiResponse<Void>> handleParameterTypeMismatch(
+            MethodArgumentTypeMismatchException ex
+    ) {
+        String message =
+                "请求参数格式错误：" + ex.getName();
+
+        return ResponseEntity
+                .badRequest()
+                .body(ApiResponse.error(400, message));
     }
 
     @ExceptionHandler(ResponseStatusException.class)
